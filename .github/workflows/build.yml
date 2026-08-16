@@ -1,0 +1,92 @@
+name: Nuitka Builds
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Validate source
+        run: python main.py --simulate
+      - name: Compile with Nuitka
+        run: >-
+          python -m nuitka
+          --mode=standalone
+          --assume-yes-for-downloads
+          --windows-console-mode=disable
+          --output-filename=Bonebound
+          --output-dir=build/windows
+          --include-data-dir=assets=assets
+          --remove-output
+          main.py
+      - name: Validate compiled game
+        shell: pwsh
+        run: |
+          $env:SDL_VIDEODRIVER = "dummy"
+          $env:SDL_AUDIODRIVER = "dummy"
+          & "build/windows/main.dist/Bonebound.exe" --simulate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          Move-Item "build/windows/main.dist" "build/windows/Bonebound"
+          Compress-Archive -Path "build/windows/Bonebound" -DestinationPath "Bonebound-v0.1.0-windows-x64.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Bonebound-v0.1.0-windows-x64
+          path: Bonebound-v0.1.0-windows-x64.zip
+          archive: false
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes patchelf
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements-build.txt
+      - name: Validate source
+        run: python main.py --simulate
+      - name: Compile with Nuitka
+        run: >-
+          python -m nuitka
+          --mode=standalone
+          --assume-yes-for-downloads
+          --output-filename=Bonebound
+          --output-dir=build/linux
+          --include-data-dir=assets=assets
+          --remove-output
+          main.py
+      - name: Validate compiled game
+        run: SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/linux/main.dist/Bonebound --simulate
+      - name: Package Linux build
+        run: |
+          mv build/linux/main.dist build/linux/Bonebound
+          tar -C build/linux -czf Bonebound-v0.1.0-linux-x64.tar.gz Bonebound
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Bonebound-v0.1.0-linux-x64
+          path: Bonebound-v0.1.0-linux-x64.tar.gz
+          archive: false
