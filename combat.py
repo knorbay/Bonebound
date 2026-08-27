@@ -324,7 +324,7 @@ class CombatEngine:
     def _enemy_strike(self):
         self.enemy_attacks += 1
         self.enemy_anim = "attack"
-        self.hero_anim = "idle"
+        self.hero_anim = "guard" if self.hero.equipment.get("shield") else "idle"
         blocked = self.rng.random() < self._block_chance(self.hero_luck)
         critical = self.rng.random() < min(.30, .03 + self.enemy.luck * .012)
         variance = self.rng.uniform(.90, 1.10)
@@ -483,7 +483,9 @@ class CombatEngine:
             self.phase = "enemy_attack"
             self.timer = .26
             self.enemy_anim = "attack"
-            self.hero_anim = "idle"
+            # Presentation only: the shield braces against every incoming hit,
+            # while its actual combat value remains the defense stat.
+            self.hero_anim = "guard" if self.hero.equipment.get("shield") else "idle"
         elif self.phase == "enemy_attack":
             self._enemy_strike()
         elif self.phase == "wave_clear":

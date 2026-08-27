@@ -175,6 +175,7 @@ def test_shields_and_trinkets():
     battle.enemy.attack = 20
     battle._enemy_strike()
     events = battle.drain_events()
+    assert battle.hero_anim == "guard"
     assert battle.hero_hp < starting_hp
     assert all(event.event_type not in {"shield_guard", "guard_ready"} for event in events)
     assert any(event.event_type == "enemy_hit" for event in events)
@@ -299,12 +300,18 @@ def render_animation(game, output_dir, state, frame_count, duration_ms):
         loop=0,
         optimize=False,
     )
+    rows = (len(frames) + 3) // 4
+    contact = Image.new("RGB", (540 * 4, 480 * rows), (9, 13, 18))
+    for index, frame in enumerate(frames):
+        thumb = frame.resize((540, 480), Image.Resampling.NEAREST)
+        contact.paste(thumb, ((index % 4) * 540, (index // 4) * 480))
+    contact.save(output_dir / f"hero_{state}_contact_v10.png")
 
 
 def render_hero_state_catalog(game, output_dir):
     surface = pygame.Surface((1200, 670))
     surface.fill((8, 12, 17))
-    game.ui.text(surface, "BONEBOUND  •  WAYFARER BODY COHESION", (40, 26), COLORS["gold"], "medium")
+    game.ui.text(surface, "BONEBOUND  •  MYSTIC WAYFARER", (40, 26), COLORS["gold"], "medium")
     chosen_frames = {"idle": 0, "run": 2, "attack": 5, "critical": 7, "hurt": 1, "guard": 3, "victory": 2, "defeat": 5}
     for index, state in enumerate(HERO_LAYOUTS):
         row, col = divmod(index, 4)
@@ -316,7 +323,49 @@ def render_hero_state_catalog(game, output_dir):
         enlarged = pygame.transform.scale(frame, (230, 230))
         surface.blit(enlarged, enlarged.get_rect(midbottom=(card.centerx, card.y + 230)))
         game.ui.text(surface, state.upper(), (card.centerx, card.bottom - 25), COLORS["text"], "small", "center")
-    pygame.image.save(surface, output_dir / "hero_body_cohesion_v9.png")
+    pygame.image.save(surface, output_dir / "hero_mystic_design_v10.png")
+
+
+def render_equipment_hold_catalog(game, output_dir):
+    game.new_game()
+    game.transition_target = None
+    shield = create_item("patched_buckler", random.Random(6700), 1)
+    assert game.hero.add_item(shield)
+    assert game.hero.equip(shield.uid)[0]
+    poses = (("idle", .20), ("run", .25), ("attack", .31), ("critical", .39), ("guard", .25))
+    atlas = pygame.Surface((1260, 360))
+    atlas.fill((8, 12, 17))
+    game.ui.text(atlas, "EQUIPPED SWORD + SHIELD • HAND-LOCK CHECK", (28, 20), COLORS["gold"], "medium")
+    for index, (pose, elapsed) in enumerate(poses):
+        game.screen_surface.fill((11, 16, 22))
+        pygame.draw.circle(game.screen_surface, (33, 43, 52), (300, 230), 130, 2)
+        pygame.draw.line(game.screen_surface, (91, 69, 49), (100, 420), (500, 420), 4)
+        game.time = elapsed
+        game.draw_hero(pygame.Vector2(300, 410), pose, elapsed, .86)
+        crop = game.screen_surface.subsurface((70, 80, 460, 360)).copy()
+        card = pygame.Rect(15 + index * 248, 62, 235, 280)
+        atlas.blit(pygame.transform.smoothscale(crop, (235, 184)), (card.x, card.y + 30))
+        pygame.draw.rect(atlas, (65, 105, 109), card, 2)
+        game.ui.text(atlas, pose.upper(), (card.centerx, card.bottom - 17), COLORS["text"], "small", "center")
+    pygame.image.save(atlas, output_dir / "hero_equipment_holds_v10.png")
+
+
+def render_shield_brace_animation(game, output_dir):
+    frames = []
+    for index in range(5):
+        elapsed = index / 12
+        game.screen_surface.fill((10, 15, 21))
+        pygame.draw.circle(game.screen_surface, (34, 43, 52), (270, 195), 135, 2)
+        pygame.draw.line(game.screen_surface, (91, 69, 49), (40, 425), (500, 425), 4)
+        game.time = elapsed
+        game.draw_hero(pygame.Vector2(260, 412), "guard", elapsed, .92)
+        frames.append(pygame_to_pil(game.screen_surface.subsurface((0, 0, 540, 480)).copy()))
+    frames[0].save(output_dir / "hero_shield_brace_v10.gif", save_all=True,
+                   append_images=frames[1:], duration=90, loop=0, optimize=False)
+    contact = Image.new("RGB", (540 * len(frames), 480), (9, 13, 18))
+    for index, frame in enumerate(frames):
+        contact.paste(frame, (index * 540, 0))
+    contact.save(output_dir / "hero_shield_brace_contact_v10.png")
 
 
 def render_potion_catalog(game, output_dir):
@@ -542,6 +591,8 @@ def main():
     render_animation(game, output_dir, "attack", 8, 82)
     render_animation(game, output_dir, "critical", 10, 70)
     render_hero_state_catalog(game, output_dir)
+    render_equipment_hold_catalog(game, output_dir)
+    render_shield_brace_animation(game, output_dir)
     render_potion_catalog(game, output_dir)
     render_fusion_catalog(game, output_dir)
     render_entrance_animation(game, output_dir)

@@ -1511,26 +1511,34 @@ class Game:
         if pose == "attack":
             right_hand, left_hand = attack_right[frame], attack_left[frame]
             angle = (0, 34, 67, 82, 54, 12, -42, -10)[frame]
+            shield_angle = (-4, -2, 1, 4, 7, 5, 1, -3)[frame]
         elif pose == "critical":
             right_hand, left_hand = critical_right[frame], critical_left[frame]
             angle = (-4, 30, 62, 92, 118, 92, 46, -12, -72, -10)[frame]
+            shield_angle = (-5, -3, 0, 3, 6, 9, 8, 4, 0, -4)[frame]
         elif pose == "guard":
             right_hand, left_hand = guard_right[frame], guard_left[frame]
             angle = -48
+            shield_angle = (-4, -9, -13, -15, -8)[frame]
         elif pose == "run":
             phase = run_phase[frame]
             bob = run_bob[frame]
             right_hand = ((32 + round(4 * phase)) * 2, (25 + bob - round(3 * phase)) * 2)
             left_hand = ((16 + round(4 * phase)) * 2, (25 + bob + round(3 * phase)) * 2)
             angle = -12 + phase * 8
+            shield_angle = phase * -5
         elif pose == "victory":
             bob = victory_bob[frame]
             right_hand, left_hand = (58, (10 + bob) * 2), (26, (21 + bob) * 2)
             angle = 44 + math.sin(elapsed * 2.8) * 3
+            shield_angle = -5 + math.sin(elapsed * 2.8) * 3
         else:
             bob = idle_bob[frame % len(idle_bob)]
-            right_hand, left_hand = (68, 48 + bob * 2), (28, 54 + bob * 2)
-            angle = -8 + math.sin(elapsed * 2.2) * 2
+            drift = ((0, 0), (0, -1), (1, -1), (1, 0), (0, 1), (0, 0))[frame % 6]
+            right_hand = ((34 + drift[0]) * 2, (24 + bob + drift[1]) * 2)
+            left_hand = ((14 - drift[0]) * 2, (27 + bob - drift[1]) * 2)
+            angle = (-18, -17, -16, -17, -18, -19)[frame % 6]
+            shield_angle = (-4, -2, 0, 2, 0, -2)[frame % 6]
 
         right_grip = (hero_rect.x + right_hand[0] * unit, hero_rect.y + right_hand[1] * unit)
         left_grip = (hero_rect.x + left_hand[0] * unit, hero_rect.y + left_hand[1] * unit)
@@ -1543,11 +1551,25 @@ class Game:
             self.screen_surface.blit(rotated, rotated.get_rect(center=(round(rotated_center.x), round(rotated_center.y))))
 
         if shield:
-            side = max(24, round(24 * unit))
+            side = max(24, round((27 if pose == "guard" else 24) * unit))
             image = self.ui.item_sprite(shield, side, crop=True)
             if image:
                 shield_center = (left_grip[0] - 2 * unit, left_grip[1] + 2 * unit)
-                self.screen_surface.blit(image, image.get_rect(center=(round(shield_center[0]), round(shield_center[1]))))
+                rotated = pygame.transform.rotate(image, shield_angle)
+                self.screen_surface.blit(rotated, rotated.get_rect(center=(round(shield_center[0]), round(shield_center[1]))))
+                # The fist and leather brace sit over the shield, making it
+                # visually held instead of floating beside the character.
+                hand_radius = max(2, round(1.7 * unit))
+                pygame.draw.line(self.screen_surface, (38, 28, 27),
+                                 (left_grip[0] - 3 * unit, left_grip[1] + unit),
+                                 (left_grip[0] + 3 * unit, left_grip[1] - unit),
+                                 max(2, round(1.1 * unit)))
+                pygame.draw.circle(self.screen_surface, (34, 27, 27), (round(left_grip[0]), round(left_grip[1])), hand_radius + 1)
+                pygame.draw.circle(self.screen_surface, (74, 51, 42), (round(left_grip[0]), round(left_grip[1])), hand_radius)
+                pygame.draw.line(self.screen_surface, (142, 99, 61),
+                                 (left_grip[0] - unit, left_grip[1] - unit),
+                                 (left_grip[0] + unit, left_grip[1]),
+                                 max(1, round(unit * .55)))
         if weapon:
             side = max(31, round(30 * unit))
             image = self.ui.item_sprite(weapon, side, crop=True)
