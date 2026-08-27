@@ -137,7 +137,7 @@ class Game:
         self.shake = 0.0
         self.impact_pause = 0.0
         self.hero_hit_flash = 0.0
-        self.hero_guard_flash = 0.0
+        self.hero_block_flash = 0.0
         self.hero_critical_flash = 0.0
         self.enemy_hit_flash = 0.0
         self.actor_anim_key = {"hero": None, "enemy": None}
@@ -418,7 +418,7 @@ class Game:
         self.fx_bursts.clear()
         self.impact_pause = 0.0
         self.hero_hit_flash = 0.0
-        self.hero_guard_flash = 0.0
+        self.hero_block_flash = 0.0
         self.hero_critical_flash = 0.0
         self.enemy_hit_flash = 0.0
         self.actor_anim_key = {"hero": None, "enemy": None}
@@ -468,8 +468,8 @@ class Game:
 
     def process_battle_events(self):
         for event in self.battle.drain_events():
-            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns", "shield_guard"} and (event.amount or event.blocked):
-                self.audio.play("block" if event.blocked or event.event_type == "shield_guard" else "critical" if event.critical else "hit")
+            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns"} and (event.amount or event.blocked):
+                self.audio.play("block" if event.blocked else "critical" if event.critical else "hit")
             elif event.event_type == "boost":
                 self.audio.play("potion")
             elif event.event_type in {"victory", "enemy_down"}:
@@ -477,14 +477,11 @@ class Game:
             elif event.event_type == "defeat":
                 self.audio.play("error")
             if event.event_type == "enemy_hit" and event.blocked:
-                self.hero_guard_flash = .34
+                self.hero_block_flash = .34
                 self.impact_pause = max(self.impact_pause, .045)
-            if event.event_type == "shield_guard":
-                self.hero_guard_flash = .28
-                self.impact_pause = max(self.impact_pause, .035)
             if event.event_type == "hero_hit" and event.critical:
                 self.hero_critical_flash = .58
-            if event.event_type in {"hero_hit", "enemy_hit", "boost", "thorns", "proc", "counter", "heal", "revive", "barrier", "shield_guard", "chill"}:
+            if event.event_type in {"hero_hit", "enemy_hit", "boost", "thorns", "proc", "counter", "heal", "revive", "barrier", "chill"}:
                 x = 870 if event.actor == "enemy" else 330
                 if event.event_type == "enemy_hit":
                     x = 330
@@ -499,9 +496,6 @@ class Game:
                 elif event.event_type == "barrier":
                     text = f"ABSORB {event.amount}"
                     color = (130, 205, 245)
-                elif event.event_type == "shield_guard":
-                    text = f"GUARD -{event.amount}"
-                    color = (86, 184, 236)
                 elif event.blocked:
                     text = "BLOCK"
                     color = (130, 205, 245)
@@ -519,7 +513,7 @@ class Game:
                         self.hero_hit_flash = .18
                     elif event.event_type == "hero_hit" and not event.blocked:
                         self.enemy_hit_flash = .16
-            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns", "shield_guard"} and event.amount:
+            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns"} and event.amount:
                     burst_y = 438
                     self.fx_bursts.append(FxBurst(x, burst_y, color, "critical" if event.critical else event.event_type))
             if event.event_type == "enemy_down":
@@ -539,7 +533,7 @@ class Game:
                 self.transition_swapped = False
         self.shake = max(0, self.shake - dt)
         self.hero_hit_flash = max(0, self.hero_hit_flash - dt)
-        self.hero_guard_flash = max(0, self.hero_guard_flash - dt)
+        self.hero_block_flash = max(0, self.hero_block_flash - dt)
         self.hero_critical_flash = max(0, self.hero_critical_flash - dt)
         self.enemy_hit_flash = max(0, self.enemy_hit_flash - dt)
         self.float_notices = [notice for notice in self.float_notices if notice.update(dt)]
@@ -1395,7 +1389,7 @@ class Game:
             display_anim = anim
         elif self.hero_critical_flash > 0:
             display_anim = "critical"
-        elif self.hero_guard_flash > 0:
+        elif self.hero_block_flash > 0:
             display_anim = "guard"
         elif self.hero_hit_flash > 0:
             display_anim = "hurt"
@@ -1554,15 +1548,6 @@ class Game:
             if image:
                 shield_center = (left_grip[0] - 2 * unit, left_grip[1] + 2 * unit)
                 self.screen_surface.blit(image, image.get_rect(center=(round(shield_center[0]), round(shield_center[1]))))
-                guard_max = getattr(self.battle, "hero_guard_max", 0) if self.battle else 0
-                guard = getattr(self.battle, "hero_guard", 0) if self.battle else 0
-                if guard_max and guard:
-                    ratio = max(0.0, min(1.0, guard / guard_max))
-                    radius = max(15, round(side * .62))
-                    arc_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
-                    arc_rect.center = (round(shield_center[0]), round(shield_center[1]))
-                    guard_color = self.ui.blend(self.ui.item_color(shield), (180, 231, 255), .58)
-                    pygame.draw.arc(self.screen_surface, guard_color, arc_rect, -math.pi / 2, -math.pi / 2 + math.tau * ratio, max(2, round(2.2 * unit)))
         if weapon:
             side = max(31, round(30 * unit))
             image = self.ui.item_sprite(weapon, side, crop=True)
@@ -1811,14 +1796,8 @@ class Game:
         hero_health = pygame.Rect(hero_plaque.x + 20, hero_plaque.y + 54, hero_plaque.width - 40, 27)
         self.ui.bar(self.screen_surface, hero_health, self.battle.hero_hp, self.battle.hero_max_hp, (204, 57, 69), "HP")
         self.ui.bar(self.screen_surface, pygame.Rect(enemy_plaque.x + 20, enemy_plaque.y + 54, enemy_plaque.width - 40, 27), self.battle.enemy.hp, self.battle.enemy.max_hp, (204, 57, 69), "HP")
-        defenses = []
-        if self.battle.hero_guard_max:
-            defenses.append(f"GUARD {self.battle.hero_guard}/{self.battle.hero_guard_max}")
-        if self.battle.hero_barrier:
-            defenses.append(f"BARRIER {self.battle.hero_barrier}")
-        defense_text = "   " + "   ".join(defenses) if defenses else "   UNGUARDED"
-        defense_color = COLORS["muted"] if defenses else (218, 132, 86)
-        self.ui.text(self.screen_surface, f"ATK {self.battle.hero_attack}   DEF {self.battle.hero_defense}   LUCK {self.battle.hero_luck}{defense_text}", (hero_plaque.x + 20, hero_plaque.y + 91), defense_color, "tiny")
+        barrier_text = f"   BARRIER {self.battle.hero_barrier}" if self.battle.hero_barrier else ""
+        self.ui.text(self.screen_surface, f"ATK {self.battle.hero_attack}   DEF {self.battle.hero_defense}   LUCK {self.battle.hero_luck}{barrier_text}", (hero_plaque.x + 20, hero_plaque.y + 91), COLORS["muted"], "tiny")
         self.ui.text(self.screen_surface, f"ATK {self.battle.enemy.attack}   DEF {self.battle.enemy.defense}   LUCK {self.battle.enemy.luck}", (enemy_plaque.right - 20, enemy_plaque.y + 91), COLORS["muted"], "tiny", "topright")
         wave_plate = pygame.Rect(493, 25, 214, 91)
         self.ui.ornamented_panel(self.screen_surface, wave_plate, (16, 22, 30), self.ui.blend(COLORS["gold"], COLORS["border"], .42), 10, 1)
@@ -1890,7 +1869,7 @@ class Game:
             slot_label = {"weapon": "W", "shield": "S", "ring1": "T1", "ring2": "T2"}[slot]
             self.ui.item_slot(self.screen_surface, icon_rect, item, self.mouse, False, False, slot_label)
         equipped_shield = self.hero.equipment.get("shield")
-        shield_status = f"{equipped_shield.display_name}  •  GUARD {self.battle.hero_guard_max}" if equipped_shield else "UNGUARDED  •  FIRST SHIELD: DUNGEON 1"
+        shield_status = f"{equipped_shield.display_name}  •  +{equipped_shield.stats.get('defense', 0)} DEF" if equipped_shield else "NO SHIELD  •  FIRST SHIELD: DUNGEON 1"
         self.ui.fitted_text(self.screen_surface, shield_status, pygame.Rect(loadout_rect.x + 14, loadout_rect.y + 111, loadout_rect.width - 28, 18), self.ui.item_color(equipped_shield) if equipped_shield else (218, 132, 86), "tiny", "center")
         stats = (("ATK", self.battle.hero_attack, (230, 143, 70)), ("DEF", self.battle.hero_defense, (83, 151, 226)), ("LUCK", self.battle.hero_luck, (186, 105, 220)))
         for index, (label, value, color) in enumerate(stats):
@@ -2166,7 +2145,7 @@ class Game:
     def run_simulation(self):
         self.new_game()
         stats = self.hero.total_stats()
-        if stats != {"health": 55, "attack": 18, "defense": 4, "luck": 3}:
+        if stats != {"health": 55, "attack": 13, "defense": 4, "luck": 3}:
             raise RuntimeError(f"Invalid starting stats: {stats}")
         self.start_battle()
         steps = 0

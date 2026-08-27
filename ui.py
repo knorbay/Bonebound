@@ -191,8 +191,6 @@ class UI:
             "alchemist": "stronger potions",
         }
         parts = []
-        if item.effects.get("guard_points"):
-            parts.append(f"{int(item.effects['guard_points'])} guard each wave")
         if item.effects.get("barrier_on_start"):
             parts.append(f"{int(item.effects['barrier_on_start'])} opening barrier")
         if item.effects.get("survive_lethal"):

@@ -443,8 +443,8 @@ def hero_frame(state, frame, total):
         result.blit(fallen, fallen.get_rect(midbottom=(24 + min(6, frame), 46)))
         return result
     skin = (222, 174, 125)
-    hair = (78, 45, 34)
-    hair_light = (122, 71, 40)
+    hood = (55, 39, 40)
+    hood_light = (101, 64, 51)
     tunic = (46, 125, 116)
     tunic_light = (75, 166, 141)
     trousers = (66, 55, 54)
@@ -514,19 +514,44 @@ def hero_frame(state, frame, total):
     # the exact equipped item over these hands, so a new sword or shield is
     # visible immediately instead of leaving the starter gear on the hero.
     neck = (shoulder_center, body_y - 10)
-    pygame.draw.rect(surface, skin, (neck[0] - 2, neck[1] - 2, 5, 5))
+    pygame.draw.rect(surface, hood, (neck[0] - 3, neck[1] - 2, 7, 5))
+    pygame.draw.line(surface, hood_light, (neck[0] - 2, neck[1] - 1), (neck[0] + 2, neck[1] - 1), 1)
     head = (shoulder_center, body_y - 15)
-    pygame.draw.circle(surface, (34, 27, 27), (head[0], head[1] + 1), 8)
-    pygame.draw.circle(surface, skin, head, 7)
-    pygame.draw.rect(surface, skin, (head[0] + 5, head[1], 3, 2))
-    pygame.draw.rect(surface, hair, (head[0] - 7, head[1] - 7, 13, 5))
-    pygame.draw.rect(surface, hair, (head[0] - 7, head[1] - 4, 3, 8))
-    pygame.draw.rect(surface, hair_light, (head[0] - 4, head[1] - 6, 6, 1))
-    pygame.draw.rect(surface, (112, 63, 39), (head[0] + 2, head[1] - 2, 3, 1))
-    pygame.draw.rect(surface, (33, 31, 31), (head[0] + 3, head[1], 2, 1))
-    pygame.draw.rect(surface, (135, 78, 57), (head[0] + 5, head[1] + 3, 2, 1))
+    outline = (27, 27, 31)
+    mask_bone = (210, 205, 184)
+    mask_light = (239, 233, 207)
+    mask_shadow = (132, 135, 128)
+    mask_eye = (77, 218, 202)
+    pygame.draw.circle(surface, outline, (head[0] - 1, head[1]), 9)
+    pygame.draw.circle(surface, hood, (head[0] - 1, head[1]), 7)
+    outer_mask = [
+        (head[0] - 6, head[1] - 7), (head[0] + 4, head[1] - 7),
+        (head[0] + 8, head[1] - 3), (head[0] + 9, head[1] + 1),
+        (head[0] + 6, head[1] + 6), (head[0] + 1, head[1] + 8),
+        (head[0] - 5, head[1] + 6), (head[0] - 8, head[1] + 2),
+        (head[0] - 8, head[1] - 4),
+    ]
+    mask = [
+        (head[0] - 5, head[1] - 6), (head[0] + 3, head[1] - 6),
+        (head[0] + 7, head[1] - 2), (head[0] + 7, head[1] + 1),
+        (head[0] + 4, head[1] + 5), (head[0] + 1, head[1] + 7),
+        (head[0] - 4, head[1] + 5), (head[0] - 6, head[1] + 2),
+        (head[0] - 6, head[1] - 3),
+    ]
+    pygame.draw.polygon(surface, outline, outer_mask)
+    pygame.draw.polygon(surface, mask_bone, mask)
+    pygame.draw.polygon(surface, mask_shadow, [
+        (head[0] + 3, head[1] - 5), (head[0] + 7, head[1] - 2),
+        (head[0] + 7, head[1] + 1), (head[0] + 4, head[1] + 5),
+        (head[0] + 1, head[1] + 7), (head[0] + 1, head[1] + 2),
+    ])
+    pygame.draw.line(surface, mask_light, (head[0] - 4, head[1] - 5), (head[0] + 2, head[1] - 5), 1)
+    pygame.draw.line(surface, outline, (head[0] - 3, head[1] - 2), (head[0] + 5, head[1] - 1), 2)
+    pygame.draw.rect(surface, mask_eye, (head[0] + 1, head[1] - 2, 2, 1))
+    pygame.draw.line(surface, (78, 82, 82), (head[0] - 2, head[1] + 1), (head[0] + 1, head[1] + 4), 1)
+    pygame.draw.line(surface, outline, (head[0] + 1, head[1] + 4), (head[0] + 4, head[1] + 3), 1)
     if state == "victory":
-        pygame.draw.rect(surface, (240, 193, 61), (head[0] + 5, head[1] - 2, 2, 2))
+        pygame.draw.rect(surface, (240, 193, 61), (head[0] + 1, head[1] - 2, 2, 2))
     return surface
 
 
@@ -535,7 +560,8 @@ def refine_hero_frame(low, state):
 
     The original silhouette remains stable across every animation, while the
     extra grid space adds finer edge lighting and material texture before the
-    frame is shown. The exact 2x scale avoids uneven limb widths between poses.
+    frame is shown. Scale2x adds stepped contours without introducing blurry
+    colors or uneven limb widths between poses.
     """
     refined = pygame.transform.scale2x(low)
     source = refined.copy()
@@ -569,7 +595,7 @@ def refine_hero_frame(low, state):
 
     if state != "defeat":
         tunic_points = []
-        skin_points = []
+        mask_points = []
         trouser_points = []
         for y in range(height):
             for x in range(width):
@@ -579,8 +605,8 @@ def refine_hero_frame(low, state):
                 r, g, b = color[:3]
                 if g > r * 1.55 and g > b * 1.03 and 80 < g < 190:
                     tunic_points.append((x, y))
-                elif r > 150 and g > 105 and b < 150:
-                    skin_points.append((x, y))
+                elif r > 160 and g > 155 and b > 140 and abs(r - g) < 25 and r > b and g > b:
+                    mask_points.append((x, y))
                 elif 42 < r < 90 and 38 < g < 80 and 38 < b < 80:
                     trouser_points.append((x, y))
 
@@ -608,37 +634,33 @@ def refine_hero_frame(low, state):
             pygame.draw.rect(refined, (207, 160, 70), (center - 1, belt_y, 3, 3))
             pygame.draw.line(refined, cloth_light, (left + 2, bottom - 1), (right - 2, bottom - 1), 1)
 
-        if skin_points and tunic_points:
-            head_points = [point for point in skin_points if point[1] < top + 2]
+        if mask_points and tunic_points:
+            head_points = [point for point in mask_points if point[1] < top + 4]
             if head_points:
                 head_left = min(point[0] for point in head_points)
                 head_right = max(point[0] for point in head_points)
                 head_top = min(point[1] for point in head_points)
                 head_bottom = max(point[1] for point in head_points)
                 face_height = head_bottom - head_top + 1
-                eye_y = head_top + max(7, round(face_height * .45))
-                eye_x = max(head_left + 7, head_right - 8)
-                # A consistent profile across every pose: stepped hairline,
-                # eyebrow, eye, ear, nose, mouth, jaw plane and cheek light.
-                pygame.draw.lines(refined, (92, 49, 34), False, [
-                    (head_left + 3, head_top + 2),
-                    (head_left + 8, head_top + 1),
-                    (head_right - 5, head_top + 3),
-                ], 2)
-                pygame.draw.line(refined, (146, 86, 49), (head_left + 7, head_top + 3), (head_right - 7, head_top + 4), 1)
-                pygame.draw.rect(refined, (112, 63, 39), (eye_x - 1, eye_y - 3, 5, 1))
-                pygame.draw.rect(refined, (24, 25, 27), (eye_x, eye_y - 1, 3, 2))
-                pygame.draw.rect(refined, (244, 222, 181), (eye_x + 1, eye_y - 1, 1, 1))
-                ear_x = head_left + 4
-                pygame.draw.rect(refined, (187, 119, 86), (ear_x, eye_y, 3, 4))
-                pygame.draw.rect(refined, (226, 166, 116), (ear_x + 1, eye_y + 1, 1, 2))
-                nose_x = head_right - 3
-                pygame.draw.line(refined, (190, 126, 91), (nose_x, eye_y), (nose_x + 1, eye_y + 4), 2)
-                pygame.draw.rect(refined, (237, 188, 137), (nose_x + 1, eye_y + 3, 2, 2))
-                mouth_y = min(head_bottom - 3, eye_y + 7)
-                pygame.draw.line(refined, (117, 65, 54), (head_right - 7, mouth_y), (head_right - 3, mouth_y), 1)
-                pygame.draw.line(refined, (178, 111, 80), (head_left + 8, head_bottom - 3), (head_right - 6, head_bottom - 1), 1)
-                pygame.draw.rect(refined, (241, 192, 141), (eye_x - 2, eye_y + 3, 2, 2))
+                eye_y = head_top + max(6, round(face_height * .42))
+                eye_left = head_left + max(5, round((head_right - head_left) * .25))
+                eye_right = head_right - 3
+                # The Wayfarer now has one authored identity in every pose: an
+                # ivory road-mask with a cold eye slit, carved planes and rune
+                # cracks. No human facial features are composited at this pass.
+                pygame.draw.line(refined, (246, 240, 215), (head_left + 4, head_top + 3), (head_right - 6, head_top + 3), 1)
+                pygame.draw.line(refined, (103, 108, 106), (head_right - 4, head_top + 5), (head_right - 3, head_bottom - 5), 2)
+                pygame.draw.line(refined, (25, 28, 32), (eye_left, eye_y), (eye_right, eye_y + 1), 3)
+                pygame.draw.rect(refined, (81, 235, 216), (eye_right - 6, eye_y, 3, 2))
+                pygame.draw.rect(refined, (202, 255, 235), (eye_right - 5, eye_y, 1, 1))
+                crack_y = min(head_bottom - 5, eye_y + 6)
+                pygame.draw.lines(refined, (76, 81, 82), False, [
+                    (head_left + 8, eye_y + 3),
+                    (head_left + 11, crack_y),
+                    (head_left + 9, min(head_bottom - 2, crack_y + 4)),
+                ], 1)
+                pygame.draw.line(refined, (31, 34, 37), (head_right - 9, head_bottom - 4), (head_right - 4, head_bottom - 5), 1)
+                pygame.draw.rect(refined, (52, 153, 148), (head_left + 5, crack_y + 1, 2, 2))
 
         if trouser_points:
             leg_top = min(point[1] for point in trouser_points)

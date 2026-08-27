@@ -115,8 +115,6 @@ class Item:
                     parts.append(f"+{int(self.effects[effect])} {label}")
             if self.effects.get("duration_turns") and any(self.effects.get(effect) for effect in ("battle_attack", "battle_defense", "battle_luck")):
                 parts.append(f"{int(self.effects['duration_turns'])} turns")
-        if self.kind == ItemKind.SHIELD and self.effects.get("guard_points"):
-            parts.append(f"Guard {int(self.effects['guard_points'])}/wave")
         if self.effects.get("barrier_on_start"):
             parts.append(f"Barrier +{int(self.effects['barrier_on_start'])}")
         return "  •  ".join(parts) if parts else "No stat bonus"
@@ -195,11 +193,14 @@ class Stage:
 
 
 class Hero:
+    BALANCE_VERSION = 2
+
     def __init__(self):
+        self.balance_version = self.BALANCE_VERSION
         self.name = "The Wayfarer"
         self.level = 1
         self.experience = 0
-        self.base_stats = {"health": 55, "attack": 8, "defense": 4, "luck": 3}
+        self.base_stats = {"health": 55, "attack": 6, "defense": 4, "luck": 3}
         self.stat_points = 0
         self.inventory_capacity = 12
         self.inventory = []
@@ -399,6 +400,7 @@ class Hero:
 
     def to_dict(self):
         return {
+            "balance_version": self.balance_version,
             "name": self.name,
             "level": self.level,
             "experience": self.experience,
@@ -435,6 +437,7 @@ class Hero:
     @classmethod
     def from_dict(cls, data):
         hero = cls()
+        saved_balance_version = int(data.get("balance_version", 1))
         hero.name = data.get("name", hero.name)
         hero.level = int(data.get("level", 1))
         hero.experience = int(data.get("experience", 0))
@@ -471,4 +474,17 @@ class Hero:
         hero.ending_seen = bool(data.get("ending_seen", False))
         hero.endless_depth = max(0, int(data.get("endless_depth", 0)))
         hero.best_endless = max(hero.endless_depth, int(data.get("best_endless", 0)))
+        if saved_balance_version < cls.BALANCE_VERSION:
+            # v2 removes the shield guard pool and lowers the launch loadout's
+            # excessive attack. Migrate existing campaigns so resuming an old
+            # save does not silently preserve the retired balance rules.
+            hero.base_stats["attack"] = max(1, hero.base_stats["attack"] - 2)
+            saved_items = hero.inventory + hero.pending_loot + hero.equipment_items()
+            for item in saved_items:
+                item.effects.pop("guard_points", None)
+                if item.template_id == "wayfarer_blade":
+                    item.stats["attack"] = max(1, item.stats.get("attack", 0) - 3)
+                    if "attack" in item.caps:
+                        item.caps["attack"] = min(16, item.caps["attack"])
+        hero.balance_version = cls.BALANCE_VERSION
         return hero

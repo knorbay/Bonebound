@@ -19,7 +19,7 @@ class SaveManager:
     VERSION = 4
 
     WEAPON_ATTACK_V4 = {
-        "wayfarer_blade": 10,
+        "wayfarer_blade": 7,
         "rusted_falchion": 8,
         "bone_cleaver": 12,
         "grave_hook": 14,
@@ -103,7 +103,11 @@ class SaveManager:
                         continue
                     target = base_attack + item.upgrade * 2
                     item.stats["attack"] = max(target, int(item.stats.get("attack", 0)))
-                    item.caps["attack"] = max(target + max(0, 5 - item.upgrade) * 2, int(item.caps.get("attack", 0)))
+                    if item.template_id == "wayfarer_blade":
+                        cap_target = 16 + item.upgrade * 2
+                    else:
+                        cap_target = target + max(0, 5 - item.upgrade) * 2
+                    item.caps["attack"] = max(cap_target, int(item.caps.get("attack", 0)))
             selected_stage = int(payload.get("selected_stage", hero.unlocked_stage))
         except SaveError:
             raise

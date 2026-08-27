@@ -1,6 +1,9 @@
+import hashlib
+import json
 import os
 import random
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -16,7 +19,7 @@ from combat import CombatEngine
 from content import ENEMIES, ITEM_TEMPLATES, STAGES, create_item, recipe_result, starter_loadout
 from game import Game, Screen
 from models import Hero, ItemKind
-from systems import Mixer
+from systems import Mixer, SaveManager
 from ui import COLORS
 
 
@@ -137,7 +140,7 @@ def test_shields_and_trinkets():
     for template_id in shield_ids:
         shield = create_item(template_id, random.Random(5100), 15)
         assert shield.stats.get("defense", 0) >= 5, template_id
-        assert shield.effects.get("guard_points", 0) > 0, template_id
+        assert "guard_points" not in shield.effects, template_id
 
     for index, template_id in enumerate(SPECIAL_TRINKETS):
         trinket = create_item(template_id, random.Random(5200 + index), 15)
@@ -155,18 +158,75 @@ def test_shields_and_trinkets():
     assert hero.equipment["shield"] is None
     assert STAGES[0].first_clear_item == "patched_buckler"
     battle = CombatEngine(hero, STAGES[0], random.Random(77))
-    assert battle.hero_guard_max == 0
+    assert not hasattr(battle, "hero_guard")
+    assert not hasattr(battle, "hero_guard_max")
     shield = create_item("patched_buckler", random.Random(5300), 1)
     assert hero.add_item(shield)
     assert hero.equip(shield.uid)[0]
     battle = CombatEngine(hero, STAGES[0], random.Random(77))
-    assert battle.hero_guard_max == 3
+    assert battle.hero_defense == hero.total_stats()["defense"] == 9
+    assert not hasattr(battle, "hero_guard")
+    assert not hasattr(battle, "hero_guard_max")
     battle.drain_events()
+    starting_hp = battle.hero_hp
+    battle.hero_stats["luck"] = 0
     battle.enemy.attack = 20
     battle._enemy_strike()
     events = battle.drain_events()
-    assert battle.hero_guard < battle.hero_guard_max
-    assert any(event.event_type == "shield_guard" for event in events)
+    assert battle.hero_hp < starting_hp
+    assert all(event.event_type not in {"shield_guard", "guard_ready"} for event in events)
+    assert any(event.event_type == "enemy_hit" for event in events)
+
+
+def test_balance_save_migration():
+    hero = Hero()
+    loadout = starter_loadout()
+    hero.equipment = loadout["equipment"]
+    hero.inventory = loadout["inventory"]
+    shield = create_item("patched_buckler", random.Random(5400), 1)
+    shield.effects["guard_points"] = 3
+    hero.equipment["shield"] = shield
+    old_save = hero.to_dict()
+    old_save.pop("balance_version")
+    old_save["base_stats"]["attack"] = 8
+    old_save["equipment"]["weapon"]["stats"]["attack"] = 10
+    old_save["equipment"]["weapon"]["caps"]["attack"] = 20
+    payload = {"version": 3, "saved_at": 0, "selected_stage": 1, "hero": old_save}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload["checksum"] = hashlib.sha256(encoded).hexdigest()[:20]
+    with tempfile.TemporaryDirectory(prefix="bonebound-balance-") as temp_dir:
+        save_path = Path(temp_dir) / "savegame.json"
+        save_path.write_text(json.dumps(payload), encoding="utf-8")
+        migrated, selected_stage = SaveManager(save_path).load()
+    assert selected_stage == 1
+    assert migrated.total_stats()["attack"] == 13
+    assert migrated.equipment["weapon"].caps["attack"] == 16
+    assert "guard_points" not in migrated.equipment["shield"].effects
+    assert migrated.to_dict()["balance_version"] == Hero.BALANCE_VERSION
+
+
+def test_launch_balance():
+    wins = 0
+    remaining_hp = []
+    for seed in range(200):
+        hero = Hero()
+        loadout = starter_loadout()
+        hero.equipment = loadout["equipment"]
+        hero.inventory = loadout["inventory"]
+        assert hero.total_stats() == {"health": 55, "attack": 13, "defense": 4, "luck": 3}
+        battle = CombatEngine(hero, STAGES[0], random.Random(10000 + seed))
+        for _ in range(200):
+            if not battle.active:
+                break
+            battle.update(1.0)
+        if battle.outcome.value == "victory":
+            wins += 1
+            remaining_hp.append(battle.hero_hp)
+    win_rate = wins / 200
+    assert .72 <= win_rate <= .88, win_rate
+    assert remaining_hp and sum(remaining_hp) / len(remaining_hp) < 15
+    assert STAGES[0].difficulty == 1.08
+    assert STAGES[-1].difficulty > 1.25
 
 
 def test_rat_animation(game):
@@ -311,7 +371,7 @@ def render_shield_catalog(game, output_dir):
     shield_ids = [template_id for template_id, template in ITEM_TEMPLATES.items() if template["kind"] == ItemKind.SHIELD]
     surface = pygame.Surface((1140, 520))
     surface.fill((9, 13, 18))
-    game.ui.text(surface, "BONEBOUND  •  SHIELD GUARD", (40, 27), COLORS["gold"], "medium")
+    game.ui.text(surface, "BONEBOUND  •  SHIELD DEFENSE", (40, 27), COLORS["gold"], "medium")
     for index, template_id in enumerate(shield_ids):
         row, col = divmod(index, 5)
         card = pygame.Rect(25 + col * 222, 75 + row * 214, 202, 196)
@@ -319,12 +379,12 @@ def render_shield_catalog(game, output_dir):
         game.ui.ornamented_panel(surface, card, (16, 22, 30), game.ui.item_color(item), 10, 2)
         game.ui.draw_item_icon(surface, pygame.Rect(card.centerx - 41, card.y + 9, 82, 82), item, True)
         game.ui.fitted_text(surface, item.display_name, pygame.Rect(card.x + 10, card.y + 101, card.width - 20, 25), COLORS["text"], "small", "center")
-        game.ui.text(surface, f"+{item.stats['defense']} DEF  •  GUARD {item.effects['guard_points']}", (card.centerx, card.y + 136), (86, 184, 236), "tiny", "center")
+        game.ui.text(surface, f"+{item.stats['defense']} DEF", (card.centerx, card.y + 136), (86, 184, 236), "tiny", "center")
         game.ui.fitted_text(surface, game.ui.item_power_text(item), pygame.Rect(card.x + 10, card.y + 158, card.width - 20, 22), COLORS["muted"], "tiny", "center")
-    pygame.image.save(surface, output_dir / "shield_guard_catalog_v5.png")
+    pygame.image.save(surface, output_dir / "shield_defense_catalog_v8.png")
 
 
-def render_rat_and_guard(game, output_dir):
+def render_rat_and_shield(game, output_dir):
     game.new_game()
     game.transition_target = None
     game.begin_battle(STAGES[0])
@@ -352,7 +412,7 @@ def render_rat_and_guard(game, output_dir):
     game.battle.anim_clock = .35
     game.time = .35
     game.draw_battle()
-    pygame.image.save(game.screen_surface, output_dir / "unguarded_start_v6.png")
+    pygame.image.save(game.screen_surface, output_dir / "shieldless_start_v8.png")
 
     shield = create_item("patched_buckler", random.Random(6400), 1)
     assert game.hero.add_item(shield)
@@ -366,13 +426,13 @@ def render_rat_and_guard(game, output_dir):
     game.battle.enemy_anim = "idle"
     game.battle.anim_clock = .35
     game.draw_battle()
-    pygame.image.save(game.screen_surface, output_dir / "shield_equipped_v6.png")
+    pygame.image.save(game.screen_surface, output_dir / "shield_equipped_v8.png")
     game.battle.drain_events()
     game.battle.rng = random.Random(77)
     game.battle._enemy_strike()
     game.process_battle_events()
     game.draw_battle()
-    pygame.image.save(game.screen_surface, output_dir / "shield_guard_impact_v6.png")
+    pygame.image.save(game.screen_surface, output_dir / "shield_defense_impact_v8.png")
 
 
 def render_final_ui(game, output_dir):
@@ -382,7 +442,7 @@ def render_final_ui(game, output_dir):
     game.clicked = False
     game.screen = Screen.INVENTORY
     game.draw()
-    pygame.image.save(game.screen_surface, output_dir / "final_inventory_unguarded_v6.png")
+    pygame.image.save(game.screen_surface, output_dir / "final_inventory_shieldless_v8.png")
     game.screen = Screen.HUB
     game.selected_stage = 1
     game.draw()
@@ -425,6 +485,8 @@ def main():
     test_potions()
     test_universal_fusions()
     test_shields_and_trinkets()
+    test_balance_save_migration()
+    test_launch_balance()
     test_rat_animation(game)
     test_enemy_canvases(game)
     render_animation(game, output_dir, "attack", 8, 82)
@@ -435,7 +497,7 @@ def main():
     render_drag_preview(game, output_dir)
     render_trinket_catalog(game, output_dir)
     render_shield_catalog(game, output_dir)
-    render_rat_and_guard(game, output_dir)
+    render_rat_and_shield(game, output_dir)
     render_final_ui(game, output_dir)
     render_enemy_fit_catalog(game, output_dir)
     pygame.quit()

@@ -61,8 +61,6 @@ class CombatEngine:
         self.hero_max_hp = self.hero_stats["health"]
         self.hero_hp = self.hero_max_hp
         self.hero_barrier = max(0, round(hero.effect_total("barrier_on_start")))
-        self.hero_guard_max = max(0, round(hero.effect_total("guard_points")))
-        self.hero_guard = self.hero_guard_max
         self.bonus_stats = {"attack": 0, "defense": 0, "luck": 0}
         self.enemy_index = -1
         self.enemy = None
@@ -148,11 +146,10 @@ class CombatEngine:
         template = ENEMIES[self.stage.enemies[self.enemy_index]]
         difficulty = max(1.0, float(getattr(self.stage, "difficulty", 1.0)))
         health_scale = difficulty
-        attack_scale = 1.0 + (difficulty - 1.0) * .72
-        defense_scale = 1.0 + (difficulty - 1.0) * .46
+        attack_scale = 1.0 + (difficulty - 1.0) * .82
+        defense_scale = 1.0 + (difficulty - 1.0) * .54
         max_hp = max(1, round(template.max_hp * health_scale))
         self.enemy_chill = 0.0
-        self.hero_guard = self.hero_guard_max
         self.enemy = EnemyState(
             template.enemy_id,
             template.name,
@@ -171,10 +168,6 @@ class CombatEngine:
         self.hero_anim = "walk"
         self.enemy_anim = "run"
         self.emit(CombatEvent("wave", f"Wave {self.wave_number}/{self.wave_total}: {self.enemy.name} approaches.", "enemy", element=self.enemy.element))
-        if self.hero_guard:
-            shield = self.hero.equipment.get("shield")
-            shield_name = shield.display_name if shield else "Shield"
-            self.emit(CombatEvent("guard_ready", f"{shield_name} restores {self.hero_guard} guard for this wave.", "hero", self.hero_guard))
 
     def _crit_chance(self, luck):
         bonus = (.05 if self.has_trait("keen") else 0) + self.hero.effect_total("crit_chance")
@@ -348,7 +341,6 @@ class CombatEngine:
         damage_reduction = min(.20, max(0.0, self.hero.effect_total("damage_reduction")))
         if damage_reduction:
             damage = max(1, round(damage * (1 - damage_reduction)))
-        shield_absorbed = 0
         if blocked:
             damage = 0
             self.blocks += 1
@@ -366,13 +358,6 @@ class CombatEngine:
             damage = 0
             blocked = True
             self.blocks += 1
-        if damage and self.hero_guard:
-            shield_absorbed = min(self.hero_guard, damage)
-            self.hero_guard -= shield_absorbed
-            damage -= shield_absorbed
-            shield = self.hero.equipment.get("shield")
-            shield_name = shield.display_name if shield else "Shield"
-            self.emit(CombatEvent("shield_guard", f"{shield_name} absorbs {shield_absorbed} damage; {self.hero_guard} guard remains.", "hero", shield_absorbed, element=self.hero.shield_element()))
         if self.hero_barrier and damage:
             absorbed = min(self.hero_barrier, damage)
             self.hero_barrier -= absorbed
@@ -384,8 +369,6 @@ class CombatEngine:
             self.enemy.hp = min(self.enemy.max_hp, self.enemy.hp + max(1, round(damage * .15)))
         if blocked:
             text = "Luck turns the blow into a complete block."
-        elif shield_absorbed and not damage:
-            text = f"{shield_name} absorbs the entire blow."
         elif critical:
             text = f"{self.enemy.name} lands a critical hit for {damage}."
         else:

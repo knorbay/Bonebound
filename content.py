@@ -23,7 +23,7 @@ def _item(name, kind, stats=None, caps=None, element=Element.NEUTRAL, element_po
 ITEM_TEMPLATES = {
     "wayfarer_blade": _item(
         "Wayfarer's Blade", ItemKind.WEAPON,
-        stats={"attack": 10}, caps={"attack": 20}, description="A simple road sword, but ten points of honest steel still change a fight.", value=24,
+        stats={"attack": 7}, caps={"attack": 16}, description="A simple road sword with enough edge to survive the first descent, but not enough to skip it.", value=24,
     ),
     "rusted_falchion": _item(
         "Rusted Falchion", ItemKind.WEAPON,
@@ -91,53 +91,53 @@ ITEM_TEMPLATES = {
     ),
     "patched_buckler": _item(
         "Patched Buckler", ItemKind.SHIELD,
-        stats={"defense": 5}, caps={"defense": 9}, effects={"guard_points": 3, "block_chance": 0.03},
-        description="Leather, wood and stubbornness held together by old cord. Adds 5 defense and restores 3 guard every wave.", value=18,
+        stats={"defense": 5}, caps={"defense": 9}, effects={"block_chance": 0.03},
+        description="Leather, wood and stubbornness held together by old cord. Its five defense points are simple, solid protection.", value=18,
     ),
     "splintered_guard": _item(
         "Splintered Guard", ItemKind.SHIELD,
-        stats={"defense": 6}, caps={"defense": 10}, effects={"guard_points": 4, "block_chance": 0.04},
-        description="Its cracks are honest records of battles survived. It renews a small guard each wave.", value=16,
+        stats={"defense": 6}, caps={"defense": 10}, effects={"block_chance": 0.04},
+        description="Its cracks are honest records of battles survived. The worn face still turns lucky blows.", value=16,
     ),
     "bonewall": _item(
         "Bonewall", ItemKind.SHIELD,
         stats={"health": 2, "defense": 7}, caps={"health": 4, "defense": 11}, tier=1,
-        effects={"guard_points": 5, "block_chance": 0.05}, description="Layered ribs turn glancing blows with an unsettling rattle.", value=32,
+        effects={"block_chance": 0.05}, description="Layered ribs turn glancing blows with an unsettling rattle.", value=32,
     ),
     "cinder_plate": _item(
         "Cinder Plate", ItemKind.SHIELD,
         stats={"health": 4, "defense": 8}, caps={"health": 7, "defense": 12}, element=Element.FIRE, element_power=2, tier=2,
-        effects={"guard_points": 6, "element_resist": 0.12}, description="Heat rolls across the plate instead of through it.", value=82,
+        effects={"element_resist": 0.12}, description="Heat rolls across the plate instead of through it.", value=82,
     ),
     "frost_mirror": _item(
         "Frost Mirror", ItemKind.SHIELD,
         stats={"health": 5, "defense": 9}, caps={"health": 8, "defense": 13}, element=Element.ICE, element_power=3, tier=3,
-        effects={"guard_points": 7, "element_resist": 0.16, "chill_attacker": 0.08}, description="An attacker briefly sees the cold end of every possible road.", value=142,
+        effects={"element_resist": 0.16, "chill_attacker": 0.08}, description="An attacker briefly sees the cold end of every possible road.", value=142,
     ),
     "storm_aegis": _item(
         "Storm Aegis", ItemKind.SHIELD,
         stats={"defense": 10, "luck": 2}, caps={"defense": 14, "luck": 3}, element=Element.STORM, element_power=3, tier=3,
-        effects={"guard_points": 7, "element_resist": 0.16, "counter_chance": 0.07}, description="Copper veins answer violence with a sharp blue spark.", value=154,
+        effects={"element_resist": 0.16, "counter_chance": 0.07}, description="Copper veins answer violence with a sharp blue spark.", value=154,
     ),
     "venom_filter": _item(
         "Venom Filter", ItemKind.SHIELD,
         stats={"health": 7, "defense": 10}, caps={"health": 11, "defense": 14}, element=Element.VENOM, element_power=3, tier=4,
-        effects={"guard_points": 8, "element_resist": 0.18, "poison_resist": 0.35}, description="Moss and silver mesh drink poison before it reaches the bearer.", value=202,
+        effects={"element_resist": 0.18, "poison_resist": 0.35}, description="Moss and silver mesh drink poison before it reaches the bearer.", value=202,
     ),
     "runic_bastion": _item(
         "Runic Bastion", ItemKind.SHIELD,
         stats={"health": 9, "defense": 12}, caps={"health": 14, "defense": 16}, element=Element.ARCANE, element_power=4, tier=4,
-        effects={"guard_points": 10, "element_resist": 0.20, "barrier_on_start": 5}, description="Each rune is a locked door facing outward.", value=304,
+        effects={"element_resist": 0.20, "barrier_on_start": 5}, description="Each rune is a locked door facing outward.", value=304,
     ),
     "kingstone_guard": _item(
         "Kingstone Guard", ItemKind.SHIELD,
         stats={"health": 13, "defense": 13}, caps={"health": 18, "defense": 17}, tier=5,
-        effects={"guard_points": 12, "block_chance": 0.12, "damage_reduction": 0.06}, description="A slab from a fallen throne that softens even the blows it cannot fully stop.", value=366,
+        effects={"block_chance": 0.12, "damage_reduction": 0.06}, description="A slab from a fallen throne that softens even the blows it cannot fully stop.", value=366,
     ),
     "last_gate": _item(
         "The Last Gate", ItemKind.SHIELD,
         stats={"health": 18, "defense": 16}, caps={"health": 24, "defense": 20}, element=Element.ARCANE, element_power=5, tier=5,
-        effects={"guard_points": 15, "block_chance": 0.15, "survive_lethal": 1}, description="It has never opened for an enemy and never closed on a friend.", value=580,
+        effects={"block_chance": 0.15, "survive_lethal": 1}, description="It has never opened for an enemy and never closed on a friend.", value=580,
     ),
     "copper_loop": _item(
         "Copper Loop", ItemKind.RING,
@@ -516,7 +516,7 @@ STAGES = (
 for _stage in STAGES:
     _stage.loot_rolls = 3
     _stage.recommended_level = max(1, round(_stage.index * .75))
-    _stage.difficulty = 1.02 + max(0, _stage.index - 1) * .005
+    _stage.difficulty = 1.08 + max(0, _stage.index - 1) * .008
 
 
 STAGE_BY_INDEX = {stage.index: stage for stage in STAGES}

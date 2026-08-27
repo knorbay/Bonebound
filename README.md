@@ -18,13 +18,14 @@ Arayüz fareyle kullanılır. `Esc` önceki ekrana döner; savaş sırasında ge
 - 25 bölümlük kampanya, özel final ekranı ve kampanya sonrasında açılan sınırsız Endless Descent
 - Sabit tempolu otomatik savaş, kritik/element/proc efektleri ve dalgalar arasında taşınan can
 - 12 slot çanta; silah, kalkan ve yüzük/kolye/tılsım/taş kabul eden iki trinket yuvası
-- Her dalga yenilenen görünür kalkan guard'ı, tam bloklar, element dirençleri ve özel karşı-etkiler
+- Kalkanlarda ayrı guard havuzu olmadan doğrudan DEF, element dirençleri ve özel karşı-etkiler
 - Kalkansız başlangıç; ilk bölüm ödülüyle açılan +5 DEF tabanlı kalkan ilerlemesi
 - Savaş içi envanter ve tut-sürükle-bırak saha mixer'ı
 - Her eşya çiftini kabul eden evrensel fusion sistemi; tarifli özel eşyalar, etkili aktarımlar ve görsel koleksiyon birleşimleri
 - Beş iksir tipi, iksir-iksir fusion'ları, beş kademeli temper, element bağlama ve otomatik bölüm sonu ganimeti
 - 69 özgün item ikonu; ekipmandaki görselle birebir eşleşen, ele/kabzaya kilitli silah-kalkan çizimi
-- Sekiz durumlu 96 piksellik Wayfarer, düşman koşu setleri ve uzaktan yaklaşmalı sahne girişleri
+- Sekiz durumlu 96 piksellik kemik maskeli Wayfarer, düşman koşu setleri ve uzaktan yaklaşmalı sahne girişleri
+- Daha düşük başlangıç saldırısı ve bölüm ilerledikçe daha sert yükselen düşman dayanıklılığı
 - 25 düşmanın her animasyonunda ortak taban hizası, güvenli savaş kadrajı ve ayrıntıyı koruyan yenilgi efekti
 
 ## Derlemeler
