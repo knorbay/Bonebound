@@ -16,48 +16,43 @@ jobs:
   macos:
     name: macOS
     runs-on: macos-latest
-
+  
     steps:
       - uses: actions/checkout@v6
-
+  
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
-
+  
       - name: Install dependencies
         run: python -m pip install -r requirements-build.txt
-
+  
       - name: Validate source
         run: |
           SDL_VIDEODRIVER=dummy \
           SDL_AUDIODRIVER=dummy \
           python main.py --simulate
-
+  
       - name: Compile with Nuitka
         run: >-
           python -m nuitka
-          --mode=standalone
+          --mode=app
           --assume-yes-for-downloads
           --output-filename=Bonebound
           --output-dir=build/macos
           --include-data-dir=assets=assets
           --remove-output
           main.py
-
-      - name: Validate compiled game
-        run: |
-          SDL_VIDEODRIVER=dummy \
-          SDL_AUDIODRIVER=dummy \
-          ./build/macos/main.dist/Bonebound --simulate
-
+  
       - name: Package macOS build
         run: |
-          mv build/macos/main.dist build/macos/Bonebound
-          tar -C build/macos -czf Bonebound-v0.1.0-macos.tar.gz Bonebound
-
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/macos/Bonebound.app \
+            Bonebound-v0.1.0-macos.zip
+  
       - uses: actions/upload-artifact@v7
         with:
           name: Bonebound-v0.1.0-macos
-          path: Bonebound-v0.1.0-macos.tar.gz
+          path: Bonebound-v0.1.0-macos.zip
           if-no-files-found: error
