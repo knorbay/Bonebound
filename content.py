@@ -23,119 +23,121 @@ def _item(name, kind, stats=None, caps=None, element=Element.NEUTRAL, element_po
 ITEM_TEMPLATES = {
     "wayfarer_blade": _item(
         "Wayfarer's Blade", ItemKind.WEAPON,
-        stats={}, caps={}, description="A plain, dependable sword carried from the first mile.", value=0,
+        stats={"attack": 10}, caps={"attack": 20}, description="A simple road sword, but ten points of honest steel still change a fight.", value=24,
     ),
     "rusted_falchion": _item(
         "Rusted Falchion", ItemKind.WEAPON,
-        stats={"attack": 1}, caps={"attack": 2}, description="The edge is tired, but its weight still teaches a useful lesson.", value=12,
+        stats={"attack": 8}, caps={"attack": 16}, description="The edge is tired, but its weight still teaches a useful lesson.", value=18,
     ),
     "bone_cleaver": _item(
         "Bone Cleaver", ItemKind.WEAPON,
-        stats={"attack": 2}, caps={"attack": 3, "luck": 1}, tier=1,
+        stats={"attack": 12}, caps={"attack": 22, "luck": 3}, tier=1,
         effects={"execute_bonus": 0.05}, description="A broad blade carved from something too large to name.", value=24,
     ),
     "grave_hook": _item(
         "Grave Hook", ItemKind.WEAPON,
-        stats={"attack": 3, "luck": 1}, caps={"attack": 4, "luck": 2}, tier=1,
+        stats={"attack": 14, "luck": 2}, caps={"attack": 24, "luck": 4}, tier=1,
         effects={"bleed_chance": 0.08}, description="Its hooked tip finds every loose plate and careless guard.", value=46,
     ),
     "emberbrand": _item(
         "Emberbrand", ItemKind.WEAPON,
-        stats={"attack": 4}, caps={"attack": 5, "luck": 1}, element=Element.FIRE, element_power=2, tier=2,
+        stats={"attack": 16}, caps={"attack": 26, "luck": 2}, element=Element.FIRE, element_power=2, tier=2,
         effects={"burn_chance": 0.12}, description="A furnace mark glows whenever the weapon tastes air.", value=78,
     ),
     "warden_pike": _item(
         "Warden Pike", ItemKind.WEAPON,
-        stats={"attack": 4, "defense": 1}, caps={"attack": 6, "defense": 2}, tier=2,
+        stats={"attack": 18, "defense": 3}, caps={"attack": 28, "defense": 5}, tier=2,
         effects={"armor_pierce": 0.08}, description="Built to keep charging beasts exactly one bad decision away.", value=84,
     ),
     "rimefang": _item(
         "Rimefang", ItemKind.WEAPON,
-        stats={"attack": 5, "defense": 1}, caps={"attack": 7, "defense": 2}, element=Element.ICE, element_power=3, tier=3,
+        stats={"attack": 19, "defense": 1}, caps={"attack": 29, "defense": 3}, element=Element.ICE, element_power=3, tier=3,
         effects={"chill_chance": 0.16}, description="Frost grows along the fuller, even beside a warm fire.", value=138,
     ),
     "stormneedle": _item(
         "Stormneedle", ItemKind.WEAPON,
-        stats={"attack": 5, "luck": 2}, caps={"attack": 7, "luck": 3}, element=Element.STORM, element_power=3, tier=3,
+        stats={"attack": 20, "luck": 2}, caps={"attack": 30, "luck": 4}, element=Element.STORM, element_power=3, tier=3,
         effects={"double_strike_chance": 0.08}, description="A narrow blade that hums a heartbeat before lightning.", value=146,
     ),
     "venomthorn": _item(
         "Venomthorn", ItemKind.WEAPON,
-        stats={"attack": 6, "luck": 1}, caps={"attack": 8, "luck": 3}, element=Element.VENOM, element_power=3, tier=4,
+        stats={"attack": 22, "luck": 1}, caps={"attack": 32, "luck": 4}, element=Element.VENOM, element_power=3, tier=4,
         effects={"poison_chance": 0.18}, description="Green sap beads along a thorn that never goes dry.", value=188,
     ),
     "lantern_sabre": _item(
         "Lantern Sabre", ItemKind.WEAPON,
-        stats={"attack": 6, "health": 3}, caps={"attack": 8, "health": 6}, element=Element.ARCANE, element_power=2, tier=4,
+        stats={"attack": 23, "health": 3}, caps={"attack": 33, "health": 7}, element=Element.ARCANE, element_power=2, tier=4,
         effects={"heal_on_victory": 4}, description="A captive blue flame remembers every foe it outlives.", value=196,
     ),
     "astral_edge": _item(
         "Astral Edge", ItemKind.WEAPON,
-        stats={"attack": 8, "luck": 2}, caps={"attack": 10, "luck": 4}, element=Element.ARCANE, element_power=4, tier=4,
+        stats={"attack": 26, "luck": 2}, caps={"attack": 36, "luck": 5}, element=Element.ARCANE, element_power=4, tier=4,
         effects={"crit_chance": 0.09}, description="Its edge seems a finger-width away from the world around it.", value=286,
     ),
     "sunken_king_blade": _item(
         "Sunken King's Blade", ItemKind.WEAPON,
-        stats={"attack": 9, "health": 5}, caps={"attack": 11, "health": 9}, element=Element.STORM, element_power=4, tier=5,
+        stats={"attack": 29, "health": 5}, caps={"attack": 39, "health": 10}, element=Element.STORM, element_power=4, tier=5,
         effects={"boss_damage": 0.12}, description="Saltwater runs from the hilt, though no sea remains nearby.", value=342,
     ),
     "voidglass_sabre": _item(
         "Voidglass Sabre", ItemKind.WEAPON,
-        stats={"attack": 11, "luck": 4}, caps={"attack": 14, "luck": 6}, element=Element.ARCANE, element_power=6, tier=5,
+        stats={"attack": 34, "luck": 4}, caps={"attack": 44, "luck": 7}, element=Element.ARCANE, element_power=6, tier=5,
         effects={"crit_chance": 0.12, "armor_pierce": 0.12}, description="The blade reflects stars that vanished before the first road was built.", value=520,
     ),
     "crownless_oath": _item(
         "Crownless Oath", ItemKind.WEAPON,
-        stats={"attack": 12, "luck": 3}, caps={"attack": 15, "luck": 5}, tier=5,
+        stats={"attack": 38, "luck": 3}, caps={"attack": 48, "luck": 7}, tier=5,
         effects={"last_stand_damage": 0.22, "execute_bonus": 0.10}, description="A king broke this sword. A wanderer taught it purpose.", value=600,
     ),
     "patched_buckler": _item(
         "Patched Buckler", ItemKind.SHIELD,
-        stats={}, caps={}, description="Leather, wood and stubbornness held together by old cord.", value=0,
+        stats={"defense": 5}, caps={"defense": 9}, effects={"guard_points": 3, "block_chance": 0.03},
+        description="Leather, wood and stubbornness held together by old cord. Adds 5 defense and restores 3 guard every wave.", value=18,
     ),
     "splintered_guard": _item(
         "Splintered Guard", ItemKind.SHIELD,
-        stats={"defense": 1}, caps={"defense": 2}, description="Its cracks are honest records of battles survived.", value=12,
+        stats={"defense": 6}, caps={"defense": 10}, effects={"guard_points": 4, "block_chance": 0.04},
+        description="Its cracks are honest records of battles survived. It renews a small guard each wave.", value=16,
     ),
     "bonewall": _item(
         "Bonewall", ItemKind.SHIELD,
-        stats={"health": 2, "defense": 2}, caps={"health": 4, "defense": 3}, tier=1,
-        effects={"block_chance": 0.05}, description="Layered ribs turn glancing blows with an unsettling rattle.", value=32,
+        stats={"health": 2, "defense": 7}, caps={"health": 4, "defense": 11}, tier=1,
+        effects={"guard_points": 5, "block_chance": 0.05}, description="Layered ribs turn glancing blows with an unsettling rattle.", value=32,
     ),
     "cinder_plate": _item(
         "Cinder Plate", ItemKind.SHIELD,
-        stats={"health": 4, "defense": 3}, caps={"health": 7, "defense": 4}, element=Element.FIRE, element_power=2, tier=2,
-        effects={"element_resist": 0.12}, description="Heat rolls across the plate instead of through it.", value=82,
+        stats={"health": 4, "defense": 8}, caps={"health": 7, "defense": 12}, element=Element.FIRE, element_power=2, tier=2,
+        effects={"guard_points": 6, "element_resist": 0.12}, description="Heat rolls across the plate instead of through it.", value=82,
     ),
     "frost_mirror": _item(
         "Frost Mirror", ItemKind.SHIELD,
-        stats={"health": 5, "defense": 4}, caps={"health": 8, "defense": 6}, element=Element.ICE, element_power=3, tier=3,
-        effects={"element_resist": 0.16, "chill_attacker": 0.08}, description="An attacker briefly sees the cold end of every possible road.", value=142,
+        stats={"health": 5, "defense": 9}, caps={"health": 8, "defense": 13}, element=Element.ICE, element_power=3, tier=3,
+        effects={"guard_points": 7, "element_resist": 0.16, "chill_attacker": 0.08}, description="An attacker briefly sees the cold end of every possible road.", value=142,
     ),
     "storm_aegis": _item(
         "Storm Aegis", ItemKind.SHIELD,
-        stats={"defense": 5, "luck": 2}, caps={"defense": 7, "luck": 3}, element=Element.STORM, element_power=3, tier=3,
-        effects={"element_resist": 0.16, "counter_chance": 0.07}, description="Copper veins answer violence with a sharp blue spark.", value=154,
+        stats={"defense": 10, "luck": 2}, caps={"defense": 14, "luck": 3}, element=Element.STORM, element_power=3, tier=3,
+        effects={"guard_points": 7, "element_resist": 0.16, "counter_chance": 0.07}, description="Copper veins answer violence with a sharp blue spark.", value=154,
     ),
     "venom_filter": _item(
         "Venom Filter", ItemKind.SHIELD,
-        stats={"health": 7, "defense": 5}, caps={"health": 11, "defense": 7}, element=Element.VENOM, element_power=3, tier=4,
-        effects={"element_resist": 0.18, "poison_resist": 0.35}, description="Moss and silver mesh drink poison before it reaches the bearer.", value=202,
+        stats={"health": 7, "defense": 10}, caps={"health": 11, "defense": 14}, element=Element.VENOM, element_power=3, tier=4,
+        effects={"guard_points": 8, "element_resist": 0.18, "poison_resist": 0.35}, description="Moss and silver mesh drink poison before it reaches the bearer.", value=202,
     ),
     "runic_bastion": _item(
         "Runic Bastion", ItemKind.SHIELD,
-        stats={"health": 9, "defense": 7}, caps={"health": 14, "defense": 9}, element=Element.ARCANE, element_power=4, tier=4,
-        effects={"element_resist": 0.20, "barrier_on_start": 5}, description="Each rune is a locked door facing outward.", value=304,
+        stats={"health": 9, "defense": 12}, caps={"health": 14, "defense": 16}, element=Element.ARCANE, element_power=4, tier=4,
+        effects={"guard_points": 10, "element_resist": 0.20, "barrier_on_start": 5}, description="Each rune is a locked door facing outward.", value=304,
     ),
     "kingstone_guard": _item(
         "Kingstone Guard", ItemKind.SHIELD,
-        stats={"health": 13, "defense": 8}, caps={"health": 18, "defense": 11}, tier=5,
-        effects={"block_chance": 0.12, "damage_reduction": 0.06}, description="A slab from a fallen throne that softens even the blows it cannot fully stop.", value=366,
+        stats={"health": 13, "defense": 13}, caps={"health": 18, "defense": 17}, tier=5,
+        effects={"guard_points": 12, "block_chance": 0.12, "damage_reduction": 0.06}, description="A slab from a fallen throne that softens even the blows it cannot fully stop.", value=366,
     ),
     "last_gate": _item(
         "The Last Gate", ItemKind.SHIELD,
-        stats={"health": 18, "defense": 11}, caps={"health": 24, "defense": 14}, element=Element.ARCANE, element_power=5, tier=5,
-        effects={"block_chance": 0.15, "survive_lethal": 1}, description="It has never opened for an enemy and never closed on a friend.", value=580,
+        stats={"health": 18, "defense": 16}, caps={"health": 24, "defense": 20}, element=Element.ARCANE, element_power=5, tier=5,
+        effects={"guard_points": 15, "block_chance": 0.15, "survive_lethal": 1}, description="It has never opened for an enemy and never closed on a friend.", value=580,
     ),
     "copper_loop": _item(
         "Copper Loop", ItemKind.RING,
@@ -191,17 +193,51 @@ ITEM_TEMPLATES = {
         stats={"health": 8, "luck": 6}, caps={"health": 12, "luck": 8}, element=Element.ARCANE, element_power=4, tier=5,
         effects={"block_chance": 0.06, "crit_chance": 0.10}, description="Good fortune enters its shadow and returns sharpened.", value=540,
     ),
+    "graveglass_pendant": _item(
+        "Graveglass Pendant", ItemKind.RING,
+        stats={"health": 3, "luck": 1}, caps={"health": 5, "luck": 2},
+        effects={"accessory_form": "pendant", "barrier_on_start": 3, "element_resist": 0.04},
+        description="A sliver of chapel glass worn at the throat. It raises a pale barrier at battle start.", value=38,
+    ),
+    "cinder_locket": _item(
+        "Cinder Locket", ItemKind.RING,
+        stats={"health": 3, "attack": 2}, caps={"health": 5, "attack": 4}, element=Element.FIRE, element_power=1, tier=2,
+        effects={"accessory_form": "locket", "burn_chance": 0.05, "element_damage": 0.04},
+        description="The portrait burned away, leaving a coal that lends every weapon a spark.", value=104,
+    ),
+    "tempest_talisman": _item(
+        "Tempest Talisman", ItemKind.RING,
+        stats={"defense": 1, "luck": 3}, caps={"defense": 3, "luck": 5}, element=Element.STORM, element_power=2, tier=3,
+        effects={"accessory_form": "talisman", "counter_chance": 0.06, "dodge_chance": 0.03},
+        description="A forked charm that answers a clean enemy hit with stored lightning.", value=168,
+    ),
+    "watcher_stone": _item(
+        "Watcher Stone", ItemKind.RING,
+        stats={"attack": 2, "luck": 3}, caps={"attack": 4, "luck": 5}, element=Element.ARCANE, element_power=2, tier=4,
+        effects={"accessory_form": "stone", "barrier_on_start": 2, "crit_chance": 0.05},
+        description="The polished eye turns toward danger before its wearer does.", value=252,
+    ),
+    "sovereign_reliquary": _item(
+        "Sovereign Reliquary", ItemKind.RING,
+        stats={"health": 8, "attack": 4}, caps={"health": 12, "attack": 7}, element=Element.ARCANE, element_power=3, tier=5,
+        effects={"accessory_form": "reliquary", "boss_damage": 0.08, "survive_lethal": 1},
+        description="A thumb-sized empty throne. Once per battle, its absent ruler refuses your death.", value=510,
+    ),
     "minor_tonic": _item(
         "Minor Tonic", ItemKind.POTION, max_stack=8,
-        effects={"heal_flat": 12}, description="A bitter red tonic that closes small wounds between breaths.", value=10,
+        effects={"heal_flat": 16}, description="A bitter red tonic that closes small wounds between breaths.", value=10,
+    ),
+    "blended_tonic": _item(
+        "Blended Tonic", ItemKind.POTION, tier=2, max_stack=6,
+        effects={"heal_flat": 22}, description="Two field mixtures sharing one visibly unstable bottle.", value=22,
     ),
     "field_tonic": _item(
         "Field Tonic", ItemKind.POTION, tier=2, max_stack=8,
-        effects={"heal_flat": 22}, description="Soldiers trust its ugly bottle more than a clean bandage.", value=24,
+        effects={"heal_flat": 30}, description="Soldiers trust its ugly bottle more than a clean bandage.", value=24,
     ),
     "greater_tonic": _item(
         "Greater Tonic", ItemKind.POTION, tier=4, max_stack=6,
-        effects={"heal_flat": 38}, description="Warmth returns from the center outward after one bright mouthful.", value=52,
+        effects={"heal_flat": 50}, description="Warmth returns from the center outward after one bright mouthful.", value=52,
     ),
     "vital_draught": _item(
         "Vital Draught", ItemKind.POTION, tier=5, max_stack=4,
@@ -222,6 +258,26 @@ ITEM_TEMPLATES = {
     "phoenix_cordial": _item(
         "Phoenix Cordial", ItemKind.POTION, tier=5, max_stack=3,
         effects={"revive_percent": 0.35}, description="A single golden feather dissolves when the bottle is opened.", value=120,
+    ),
+    "bloodsalt_elixir": _item(
+        "Bloodsalt Elixir", ItemKind.POTION, tier=2, max_stack=5,
+        effects={"heal_flat": 18, "battle_attack": 2, "duration_turns": 4}, description="Red salt bites the wound shut and leaves the sword arm restless.", value=34,
+    ),
+    "stoneblood_flask": _item(
+        "Stoneblood Flask", ItemKind.POTION, tier=3, max_stack=5,
+        effects={"heal_flat": 24, "battle_defense": 3, "duration_turns": 5}, description="A mineral-heavy draught that mends flesh and hardens it for the next blows.", value=46,
+    ),
+    "stormstep_serum": _item(
+        "Stormstep Serum", ItemKind.POTION, tier=4, max_stack=4,
+        effects={"battle_attack": 2, "battle_luck": 4, "duration_turns": 5}, description="Bottled static makes every opening feel half a heartbeat wider.", value=62,
+    ),
+    "moonmilk_cordial": _item(
+        "Moonmilk Cordial", ItemKind.POTION, tier=4, max_stack=4,
+        effects={"heal_percent": 0.28, "battle_luck": 3, "duration_turns": 6}, description="Pale silver medicine restores the body and bends chance toward survival.", value=74,
+    ),
+    "last_breath_phial": _item(
+        "Last Breath Phial", ItemKind.POTION, tier=5, max_stack=3,
+        effects={"heal_flat": 32, "revive_percent": 0.22}, description="A dark hourglass bottle saved for the instant a heartbeat becomes negotiable.", value=108,
     ),
     "ember_essence": _item(
         "Ember Essence", ItemKind.ESSENCE, element=Element.FIRE, element_power=1, tier=2, max_stack=12,
@@ -320,6 +376,11 @@ _ITEM_TRAITS = {
     "venom_signet": ("leech",),
     "astral_orbit": ("opener", "keen"),
     "fortune_eclipse": ("alchemist", "boss_hunter"),
+    "graveglass_pendant": ("warding",),
+    "cinder_locket": ("opener",),
+    "tempest_talisman": ("combo",),
+    "watcher_stone": ("opener", "keen"),
+    "sovereign_reliquary": ("last_stand", "boss_hunter"),
 }
 
 
@@ -362,31 +423,31 @@ def create_item(template_id, rng=None, stage=1):
 
 
 ENEMIES = {
-    "dust_rat": EnemyTemplate("dust_rat", "Dust Rat", 18, 5, 1, 1, Element.NEUTRAL, 7, ("bone_shard", "tattered_hide", "minor_tonic"), "A cellar scavenger made fearless by grave dust."),
-    "bone_scout": EnemyTemplate("bone_scout", "Bone Scout", 24, 6, 2, 2, Element.NEUTRAL, 9, ("bone_shard", "iron_scrap", "rusted_falchion", "minor_tonic"), "A restless skeleton sent ahead to count the living."),
-    "crypt_slinger": EnemyTemplate("crypt_slinger", "Crypt Slinger", 22, 7, 1, 4, Element.NEUTRAL, 10, ("bone_shard", "ghost_salt", "copper_loop", "minor_tonic"), "It hurls grave pebbles with unnerving patience."),
-    "marrow_guard": EnemyTemplate("marrow_guard", "Marrow Guard", 34, 7, 4, 2, Element.NEUTRAL, 13, ("bone_shard", "iron_scrap", "bonewall", "iron_vow"), "Old discipline remains after every softer thing has gone.", elite=True),
-    "ossuary_captain": EnemyTemplate("ossuary_captain", "Ossuary Captain", 50, 9, 5, 4, Element.NEUTRAL, 24, ("grave_hook", "bonewall", "bone_luck", "ghost_salt"), "A commander assembled from the finest bones in the vault.", boss=True),
-    "cinder_imp": EnemyTemplate("cinder_imp", "Cinder Imp", 38, 10, 3, 5, Element.FIRE, 16, ("ember_core", "ember_essence", "field_tonic", "red_coil"), "A laughing coal with claws and terrible manners."),
-    "ash_hound": EnemyTemplate("ash_hound", "Ash Hound", 45, 11, 3, 4, Element.FIRE, 18, ("ember_core", "tattered_hide", "ember_essence", "fury_phial"), "It tracks warm blood through smoke-thick corridors."),
-    "furnace_knight": EnemyTemplate("furnace_knight", "Furnace Knight", 58, 12, 6, 3, Element.FIRE, 22, ("iron_scrap", "ember_core", "cinder_plate", "warden_pike"), "Its armor is a walking kiln with no door.", elite=True),
-    "coal_oracle": EnemyTemplate("coal_oracle", "Coal Oracle", 48, 14, 4, 8, Element.FIRE, 24, ("ghost_salt", "ember_essence", "ember_signet", "fortune_vial"), "Every crack in its black shell shows a different doomed future."),
-    "pyre_warden": EnemyTemplate("pyre_warden", "Pyre Warden", 78, 15, 8, 6, Element.FIRE, 40, ("emberbrand", "cinder_plate", "ember_signet", "ember_core"), "The final keeper of a furnace built to burn names.", boss=True),
-    "rime_widow": EnemyTemplate("rime_widow", "Rime Widow", 66, 16, 6, 9, Element.ICE, 28, ("frostglass", "rime_essence", "rime_signet", "field_tonic"), "Each glassy leg carries winter into the stone."),
-    "icebound_thrall": EnemyTemplate("icebound_thrall", "Icebound Thrall", 78, 16, 9, 4, Element.ICE, 30, ("frostglass", "iron_scrap", "frost_mirror", "greater_tonic"), "A prisoner preserved long after the sentence lost meaning."),
-    "thunder_crow": EnemyTemplate("thunder_crow", "Thunder Crow", 61, 19, 5, 12, Element.STORM, 31, ("storm_wire", "storm_essence", "storm_signet", "fortune_vial"), "Black wings cut bright seams into the frozen air."),
-    "hail_sentinel": EnemyTemplate("hail_sentinel", "Hail Sentinel", 92, 18, 11, 6, Element.ICE, 36, ("frostglass", "storm_wire", "frost_mirror", "storm_aegis"), "A stone watchman polished smooth by a private blizzard.", elite=True),
-    "tempest_matriarch": EnemyTemplate("tempest_matriarch", "Tempest Matriarch", 116, 21, 12, 11, Element.STORM, 56, ("rimefang", "stormneedle", "storm_aegis", "storm_signet"), "She nests where mountain weather is born.", boss=True),
-    "mire_leech": EnemyTemplate("mire_leech", "Mire Leech", 94, 21, 9, 8, Element.VENOM, 39, ("tattered_hide", "venom_essence", "greater_tonic", "venom_signet"), "A swollen thing that leaves poisoned footprints before it arrives."),
-    "plague_duelist": EnemyTemplate("plague_duelist", "Plague Duelist", 102, 23, 10, 13, Element.VENOM, 43, ("venom_essence", "venomthorn", "venom_signet", "fury_phial"), "Courtly manners survive beneath a mask full of spores."),
-    "hex_moth": EnemyTemplate("hex_moth", "Hex Moth", 88, 24, 8, 16, Element.ARCANE, 44, ("ghost_salt", "arcane_essence", "fortune_vial", "astral_orbit"), "Its wings shed symbols that become curses when read."),
-    "rune_golem": EnemyTemplate("rune_golem", "Rune Golem", 132, 22, 15, 5, Element.ARCANE, 50, ("iron_scrap", "void_resin", "runic_bastion", "arcane_essence"), "A walking argument written in a dead geometric language.", elite=True),
-    "alchemist_revenant": EnemyTemplate("alchemist_revenant", "Alchemist Revenant", 156, 26, 15, 15, Element.VENOM, 72, ("venomthorn", "lantern_sabre", "venom_filter", "arcane_essence"), "Death only gave the old experimenter a quieter laboratory.", boss=True),
-    "void_acolyte": EnemyTemplate("void_acolyte", "Void Acolyte", 128, 27, 13, 16, Element.ARCANE, 54, ("void_resin", "arcane_essence", "greater_tonic", "astral_edge"), "A pilgrim devoted to the silence between stars."),
-    "crownless_guard": EnemyTemplate("crownless_guard", "Crownless Guard", 152, 28, 17, 10, Element.NEUTRAL, 59, ("crown_fragment", "kingstone_guard", "sunken_king_blade", "iron_scrap"), "It protects an empty throne from a kingdom that no longer exists.", elite=True),
-    "starved_dragon": EnemyTemplate("starved_dragon", "Starved Dragon", 174, 31, 15, 15, Element.FIRE, 66, ("ember_core", "primal_essence", "sunken_king_blade", "phoenix_cordial"), "Hunger has sharpened every scale into a grievance."),
-    "oathbreaker": EnemyTemplate("oathbreaker", "The Oathbreaker", 188, 32, 18, 18, Element.STORM, 74, ("storm_wire", "voidglass_sabre", "kingstone_guard", "fortune_eclipse"), "Once a hero, now the reason every promise needs a witness.", elite=True),
-    "hollow_sovereign": EnemyTemplate("hollow_sovereign", "Hollow Sovereign", 248, 35, 21, 20, Element.ARCANE, 120, ("crown_fragment", "primal_essence", "last_gate", "fortune_eclipse", "voidglass_sabre"), "The throne is full. The ruler is not.", boss=True),
+    "dust_rat": EnemyTemplate("dust_rat", "Dust Rat", 32, 8, 2, 1, Element.NEUTRAL, 9, ("bone_shard", "tattered_hide", "minor_tonic", "graveglass_pendant"), "A cellar scavenger made fearless by grave dust."),
+    "bone_scout": EnemyTemplate("bone_scout", "Bone Scout", 42, 10, 3, 2, Element.NEUTRAL, 12, ("bone_shard", "iron_scrap", "rusted_falchion", "minor_tonic"), "A restless skeleton sent ahead to count the living."),
+    "crypt_slinger": EnemyTemplate("crypt_slinger", "Crypt Slinger", 38, 11, 2, 4, Element.NEUTRAL, 13, ("bone_shard", "ghost_salt", "copper_loop", "minor_tonic", "bloodsalt_elixir"), "It hurls grave pebbles with unnerving patience."),
+    "marrow_guard": EnemyTemplate("marrow_guard", "Marrow Guard", 56, 11, 6, 2, Element.NEUTRAL, 17, ("bone_shard", "iron_scrap", "bonewall", "iron_vow"), "Old discipline remains after every softer thing has gone.", elite=True),
+    "ossuary_captain": EnemyTemplate("ossuary_captain", "Ossuary Captain", 82, 14, 7, 4, Element.NEUTRAL, 32, ("grave_hook", "bonewall", "bone_luck", "ghost_salt"), "A commander assembled from the finest bones in the vault.", boss=True),
+    "cinder_imp": EnemyTemplate("cinder_imp", "Cinder Imp", 62, 15, 5, 5, Element.FIRE, 21, ("ember_core", "ember_essence", "field_tonic", "red_coil"), "A laughing coal with claws and terrible manners."),
+    "ash_hound": EnemyTemplate("ash_hound", "Ash Hound", 72, 17, 5, 4, Element.FIRE, 24, ("ember_core", "tattered_hide", "ember_essence", "fury_phial"), "It tracks warm blood through smoke-thick corridors."),
+    "furnace_knight": EnemyTemplate("furnace_knight", "Furnace Knight", 92, 18, 9, 3, Element.FIRE, 29, ("iron_scrap", "ember_core", "cinder_plate", "warden_pike", "stoneblood_flask"), "Its armor is a walking kiln with no door.", elite=True),
+    "coal_oracle": EnemyTemplate("coal_oracle", "Coal Oracle", 78, 21, 6, 8, Element.FIRE, 32, ("ghost_salt", "ember_essence", "ember_signet", "fortune_vial", "cinder_locket"), "Every crack in its black shell shows a different doomed future."),
+    "pyre_warden": EnemyTemplate("pyre_warden", "Pyre Warden", 124, 22, 12, 6, Element.FIRE, 54, ("emberbrand", "cinder_plate", "ember_signet", "ember_core"), "The final keeper of a furnace built to burn names.", boss=True),
+    "rime_widow": EnemyTemplate("rime_widow", "Rime Widow", 105, 24, 9, 9, Element.ICE, 37, ("frostglass", "rime_essence", "rime_signet", "field_tonic"), "Each glassy leg carries winter into the stone."),
+    "icebound_thrall": EnemyTemplate("icebound_thrall", "Icebound Thrall", 124, 24, 13, 4, Element.ICE, 40, ("frostglass", "iron_scrap", "frost_mirror", "greater_tonic"), "A prisoner preserved long after the sentence lost meaning."),
+    "thunder_crow": EnemyTemplate("thunder_crow", "Thunder Crow", 98, 28, 8, 12, Element.STORM, 41, ("storm_wire", "storm_essence", "storm_signet", "fortune_vial", "stormstep_serum", "tempest_talisman"), "Black wings cut bright seams into the frozen air."),
+    "hail_sentinel": EnemyTemplate("hail_sentinel", "Hail Sentinel", 146, 27, 16, 6, Element.ICE, 48, ("frostglass", "storm_wire", "frost_mirror", "storm_aegis"), "A stone watchman polished smooth by a private blizzard.", elite=True),
+    "tempest_matriarch": EnemyTemplate("tempest_matriarch", "Tempest Matriarch", 185, 32, 18, 11, Element.STORM, 75, ("rimefang", "stormneedle", "storm_aegis", "storm_signet"), "She nests where mountain weather is born.", boss=True),
+    "mire_leech": EnemyTemplate("mire_leech", "Mire Leech", 150, 32, 14, 8, Element.VENOM, 52, ("tattered_hide", "venom_essence", "greater_tonic", "venom_signet"), "A swollen thing that leaves poisoned footprints before it arrives."),
+    "plague_duelist": EnemyTemplate("plague_duelist", "Plague Duelist", 163, 35, 15, 13, Element.VENOM, 57, ("venom_essence", "venomthorn", "venom_signet", "fury_phial"), "Courtly manners survive beneath a mask full of spores."),
+    "hex_moth": EnemyTemplate("hex_moth", "Hex Moth", 140, 36, 12, 16, Element.ARCANE, 59, ("ghost_salt", "arcane_essence", "fortune_vial", "astral_orbit", "moonmilk_cordial", "watcher_stone"), "Its wings shed symbols that become curses when read."),
+    "rune_golem": EnemyTemplate("rune_golem", "Rune Golem", 210, 33, 22, 5, Element.ARCANE, 67, ("iron_scrap", "void_resin", "runic_bastion", "arcane_essence"), "A walking argument written in a dead geometric language.", elite=True),
+    "alchemist_revenant": EnemyTemplate("alchemist_revenant", "Alchemist Revenant", 248, 39, 22, 15, Element.VENOM, 96, ("venomthorn", "lantern_sabre", "venom_filter", "arcane_essence"), "Death only gave the old experimenter a quieter laboratory.", boss=True),
+    "void_acolyte": EnemyTemplate("void_acolyte", "Void Acolyte", 204, 40, 19, 16, Element.ARCANE, 72, ("void_resin", "arcane_essence", "greater_tonic", "astral_edge"), "A pilgrim devoted to the silence between stars."),
+    "crownless_guard": EnemyTemplate("crownless_guard", "Crownless Guard", 242, 42, 25, 10, Element.NEUTRAL, 79, ("crown_fragment", "kingstone_guard", "sunken_king_blade", "iron_scrap"), "It protects an empty throne from a kingdom that no longer exists.", elite=True),
+    "starved_dragon": EnemyTemplate("starved_dragon", "Starved Dragon", 276, 46, 22, 15, Element.FIRE, 88, ("ember_core", "primal_essence", "sunken_king_blade", "phoenix_cordial", "last_breath_phial"), "Hunger has sharpened every scale into a grievance."),
+    "oathbreaker": EnemyTemplate("oathbreaker", "The Oathbreaker", 300, 48, 27, 18, Element.STORM, 99, ("storm_wire", "voidglass_sabre", "kingstone_guard", "fortune_eclipse"), "Once a hero, now the reason every promise needs a witness.", elite=True),
+    "hollow_sovereign": EnemyTemplate("hollow_sovereign", "Hollow Sovereign", 395, 52, 31, 20, Element.ARCANE, 160, ("crown_fragment", "primal_essence", "last_gate", "fortune_eclipse", "voidglass_sabre", "sovereign_reliquary"), "The throne is full. The ruler is not.", boss=True),
 }
 
 
@@ -424,30 +485,30 @@ for _enemy_id, _traits in _ENEMY_TRAITS.items():
 
 
 STAGES = (
-    Stage(1, "The First Rattle", 1, ("dust_rat", "bone_scout"), "minor_tonic", 1, "The road descends into a vault that has started breathing again.", 1),
+    Stage(1, "The First Rattle", 1, ("dust_rat", "bone_scout"), "patched_buckler", 1, "The road descends into a vault that has started breathing again.", 1),
     Stage(2, "Chalk Teeth", 1, ("dust_rat", "dust_rat", "crypt_slinger"), "splintered_guard", 1, "Small hunters test every shadow between the burial shelves.", 1),
-    Stage(3, "The Empty Procession", 2, ("bone_scout", "crypt_slinger", "bone_scout"), "rusted_falchion", 2, "A funeral march repeats without mourners or destination.", 1),
+    Stage(3, "The Empty Procession", 2, ("bone_scout", "crypt_slinger", "bone_scout"), "graveglass_pendant", 2, "A funeral march repeats without mourners or destination.", 1),
     Stage(4, "Marrow Barracks", 3, ("bone_scout", "marrow_guard", "crypt_slinger"), "bone_luck", 2, "Dead soldiers drill beneath banners reduced to thread.", 1),
     Stage(5, "Captain of the Ossuary", 4, ("marrow_guard", "crypt_slinger", "ossuary_captain"), "bone_cleaver", 3, "The vault's assembled commander waits behind a gate of ribs.", 1),
     Stage(6, "Cinder Stair", 5, ("cinder_imp", "cinder_imp", "ash_hound"), "ember_essence", 2, "Each downward step is hotter than the last.", 2),
     Stage(7, "Kennels of Smoke", 6, ("ash_hound", "cinder_imp", "ash_hound"), "ember_signet", 2, "Something hungry circles beyond the furnace haze.", 2),
     Stage(8, "The Walking Kiln", 7, ("cinder_imp", "furnace_knight", "ash_hound"), "cinder_plate", 2, "Armored footsteps ring through chambers bright with slag.", 2),
-    Stage(9, "Prophecies in Coal", 8, ("ash_hound", "coal_oracle", "furnace_knight"), "field_tonic", 3, "Every ember shows a future in which the road ends here.", 2),
+    Stage(9, "Prophecies in Coal", 8, ("ash_hound", "coal_oracle", "furnace_knight"), "cinder_locket", 3, "Every ember shows a future in which the road ends here.", 2),
     Stage(10, "Warden of the Namefire", 9, ("furnace_knight", "coal_oracle", "pyre_warden"), "emberbrand", 3, "A great furnace burns the names of those it defeats.", 2),
     Stage(11, "White Thread Pass", 10, ("rime_widow", "icebound_thrall", "rime_widow"), "rime_essence", 2, "Frozen silk marks the safe path and the trap alike.", 3),
     Stage(12, "Prisoners of Winter", 11, ("icebound_thrall", "rime_widow", "icebound_thrall"), "frost_mirror", 3, "Ancient captives wake when warm footsteps cross the ice.", 3),
-    Stage(13, "Black Wings, Blue Sky", 12, ("thunder_crow", "rime_widow", "thunder_crow", "icebound_thrall"), "storm_essence", 3, "The storm sends scouts with feathers like knives.", 3),
+    Stage(13, "Black Wings, Blue Sky", 12, ("thunder_crow", "rime_widow", "thunder_crow", "icebound_thrall"), "tempest_talisman", 3, "The storm sends scouts with feathers like knives.", 3),
     Stage(14, "Sentinel in the Hail", 13, ("icebound_thrall", "hail_sentinel", "thunder_crow"), "storm_signet", 3, "A patient guardian blocks the only break in the weather.", 3),
     Stage(15, "Nest of the Tempest", 14, ("hail_sentinel", "thunder_crow", "tempest_matriarch"), "rimefang", 4, "At the summit, a vast nest cradles an unfinished thunderstorm.", 3),
     Stage(16, "The Green Water", 15, ("mire_leech", "mire_leech", "plague_duelist"), "venom_essence", 3, "The flooded road glows wherever poison touches stone.", 4),
     Stage(17, "Courtyard of Masks", 16, ("plague_duelist", "mire_leech", "plague_duelist"), "venom_filter", 3, "Masked nobles continue a duel whose audience turned to moss.", 4),
-    Stage(18, "Wingwritten Hex", 17, ("hex_moth", "plague_duelist", "hex_moth"), "arcane_essence", 3, "Curses flutter through the dark looking for someone to read them.", 4),
+    Stage(18, "Wingwritten Hex", 17, ("hex_moth", "plague_duelist", "hex_moth"), "watcher_stone", 3, "Curses flutter through the dark looking for someone to read them.", 4),
     Stage(19, "The Geometric Door", 18, ("mire_leech", "rune_golem", "hex_moth"), "astral_orbit", 4, "A door made of equations has appointed its own guard.", 4),
     Stage(20, "Revenant Laboratory", 19, ("rune_golem", "plague_duelist", "alchemist_revenant"), "runic_bastion", 4, "The final experiment has been waiting for a living ingredient.", 4),
     Stage(21, "Pilgrims of Nothing", 20, ("void_acolyte", "void_acolyte", "crownless_guard"), "greater_tonic", 3, "Silent pilgrims climb toward a palace cut from night.", 5),
     Stage(22, "The Unoccupied Throne", 21, ("crownless_guard", "void_acolyte", "crownless_guard"), "void_resin", 4, "An army guards a throne that refuses every claimant.", 5),
     Stage(23, "Hunger Beneath Gold", 22, ("void_acolyte", "starved_dragon", "crownless_guard"), "astral_edge", 4, "A dragon gnaws the gilded foundations from below.", 5),
-    Stage(24, "Promise at World's End", 23, ("crownless_guard", "oathbreaker", "starved_dragon"), "crown_fragment", 4, "A broken hero offers one last chance to turn back.", 5),
+    Stage(24, "Promise at World's End", 23, ("crownless_guard", "oathbreaker", "starved_dragon"), "sovereign_reliquary", 4, "A broken hero offers one last chance to turn back.", 5),
     Stage(25, "The Hollow Crown", 25, ("void_acolyte", "oathbreaker", "crownless_guard", "hollow_sovereign"), "crownless_oath", 5, "Beyond every dungeon waits a ruler shaped exactly like absence.", 5),
 )
 
@@ -455,9 +516,37 @@ STAGES = (
 for _stage in STAGES:
     _stage.loot_rolls = 3
     _stage.recommended_level = max(1, round(_stage.index * .75))
+    _stage.difficulty = 1.02 + max(0, _stage.index - 1) * .005
 
 
 STAGE_BY_INDEX = {stage.index: stage for stage in STAGES}
+
+
+def create_endless_stage(depth, seed):
+    depth = max(1, int(depth))
+    roller = random.Random(seed + depth * 7919)
+    regular = [enemy_id for enemy_id, enemy in ENEMIES.items() if not enemy.boss]
+    bosses = [enemy_id for enemy_id, enemy in ENEMIES.items() if enemy.boss]
+    waves = min(6, 4 + depth // 5)
+    enemies = [roller.choice(regular) for _ in range(waves)]
+    if depth % 5 == 0:
+        enemies[-1] = bosses[(depth // 5 - 1) % len(bosses)]
+    elif depth % 3 == 0:
+        elites = [enemy_id for enemy_id in regular if ENEMIES[enemy_id].elite]
+        enemies[-1] = roller.choice(elites)
+    names = ("The Unending Stair", "Crownless Echo", "The Deep Road", "Vault Without Dawn", "The Last Door Again")
+    return Stage(
+        1000 + depth,
+        f"{names[(depth - 1) % len(names)]} {depth}",
+        20 + depth,
+        tuple(enemies),
+        "primal_essence",
+        3,
+        "The dungeon remembers the campaign and rebuilds itself stronger around every victory.",
+        5 + min(4, (depth - 1) // 5),
+        1.0 + depth * .075,
+        depth,
+    )
 
 
 RECIPES = {
@@ -477,6 +566,11 @@ RECIPES = {
     tuple(sorted(("copper_loop", "venom_essence"))): "venom_signet",
     tuple(sorted(("copper_loop", "arcane_essence"))): "astral_orbit",
     tuple(sorted(("minor_tonic", "field_tonic"))): "greater_tonic",
+    tuple(sorted(("minor_tonic", "fury_phial"))): "bloodsalt_elixir",
+    tuple(sorted(("field_tonic", "ironbark_tonic"))): "stoneblood_flask",
+    tuple(sorted(("fortune_vial", "fury_phial"))): "stormstep_serum",
+    tuple(sorted(("vital_draught", "fortune_vial"))): "moonmilk_cordial",
+    tuple(sorted(("phoenix_cordial", "greater_tonic"))): "last_breath_phial",
     tuple(sorted(("emberbrand", "rimefang"))): "astral_edge",
     tuple(sorted(("runic_bastion", "crown_fragment"))): "last_gate",
     tuple(sorted(("astral_edge", "primal_essence"))): "voidglass_sabre",
@@ -491,7 +585,6 @@ def recipe_result(first_template, second_template):
 def starter_loadout():
     roller = random.Random(7319)
     blade = create_item("wayfarer_blade", roller, 1)
-    shield = create_item("patched_buckler", roller, 1)
     tonic = create_item("minor_tonic", roller, 1)
     tonic.stack = 2
     bark = create_item("ironbark_tonic", roller, 1)
@@ -500,7 +593,7 @@ def starter_loadout():
     iron = create_item("iron_scrap", roller, 1)
     iron.stack = 2
     return {
-        "equipment": {"weapon": blade, "shield": shield, "ring1": None, "ring2": None},
+        "equipment": {"weapon": blade, "shield": None, "ring1": None, "ring2": None},
         "inventory": [tonic, bark, bones, iron],
     }
 

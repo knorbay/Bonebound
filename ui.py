@@ -66,12 +66,100 @@ class UI:
                 self.images[name] = pygame.image.load(root / f"{name}.svg").convert_alpha()
             except (FileNotFoundError, OSError, pygame.error):
                 pass
+        for name in ("bonebound_logo_v2", "bonebound_logo_v3", "battle_backdrop_v2"):
+            try:
+                self.images[name] = pygame.image.load(root / f"{name}.png").convert_alpha()
+            except (FileNotFoundError, OSError, pygame.error):
+                pass
+        self.item_images = {}
+        item_root = root.parent / "items"
+        for path in item_root.glob("*.png"):
+            try:
+                self.item_images[path.stem] = pygame.image.load(path).convert_alpha()
+            except (OSError, pygame.error):
+                pass
 
     def asset(self, name, size):
         key = (name, tuple(size))
         if key not in self.scaled_images and name in self.images:
-            self.scaled_images[key] = pygame.transform.smoothscale(self.images[name], size)
+            transform = pygame.transform.scale if name == "battle_backdrop_v2" else pygame.transform.smoothscale
+            self.scaled_images[key] = transform(self.images[name], size)
         return self.scaled_images.get(key)
+
+    def item_sprite(self, item, target, crop=False):
+        """Return the same item artwork for inventory and equipped-world use."""
+        if not item:
+            return None
+        fusion_key = str(item.effects.get("fusion_visual", ""))
+        base_id = item.effects.get("fusion_base", item.template_id) if fusion_key else item.template_id
+        original = self.item_images.get(base_id) or self.item_images.get(item.template_id)
+        if not original:
+            return None
+        target = max(8, int(target))
+        key = ("item_sprite", item.template_id, item.element.value, item.upgrade, fusion_key, target, crop)
+        if key in self.scaled_images:
+            return self.scaled_images[key]
+        source = original.copy()
+        if fusion_key:
+            catalyst = self.item_images.get(item.effects.get("fusion_catalyst", ""))
+            if catalyst:
+                catalyst = pygame.transform.scale(catalyst, source.get_size())
+                seed = int(fusion_key[:8], 16)
+                if seed & 1:
+                    catalyst = pygame.transform.flip(catalyst, True, False)
+                for y in range(source.get_height()):
+                    for x in range(source.get_width()):
+                        base_pixel = source.get_at((x, y))
+                        catalyst_pixel = catalyst.get_at((x, y))
+                        if base_pixel.a < 16:
+                            continue
+                        pattern = (x * 3 + y * 5 + seed) % 13
+                        if catalyst_pixel.a > 24 and pattern < 6:
+                            mixed = self.blend(base_pixel[:3], catalyst_pixel[:3], .56)
+                            source.set_at((x, y), (*mixed, base_pixel.a))
+                        elif pattern == 8:
+                            accent = ELEMENT_COLORS.get(item.element, COLORS["gold"])
+                            source.set_at((x, y), (*self.blend(base_pixel[:3], accent, .42), base_pixel.a))
+                rune = self.blend(self.item_color(item), (255, 255, 255), .58)
+                mark_x = 7 + seed % max(1, source.get_width() - 14)
+                mark_y = 7 + (seed // 11) % max(1, source.get_height() - 14)
+                for dx, dy in ((0, -2), (0, -1), (0, 0), (-1, 0), (1, 0), (0, 1), (0, 2)):
+                    px, py = mark_x + dx, mark_y + dy
+                    if 0 <= px < source.get_width() and 0 <= py < source.get_height() and source.get_at((px, py)).a > 16:
+                        source.set_at((px, py), (*rune, 255))
+        if crop:
+            bounds = source.get_bounding_rect(min_alpha=8)
+            if bounds.width and bounds.height:
+                source = source.subsurface(bounds).copy()
+        if crop:
+            scale = min(target / max(1, source.get_width()), target / max(1, source.get_height()))
+            size = (max(1, round(source.get_width() * scale)), max(1, round(source.get_height() * scale)))
+        else:
+            size = (target, target)
+        icon = pygame.transform.scale(source, size)
+        if item.element != Element.NEUTRAL:
+            color = ELEMENT_COLORS[item.element]
+            multiplier = self.blend((255, 255, 255), color, .30)
+            icon.fill((*multiplier, 255), special_flags=pygame.BLEND_RGBA_MULT)
+            # Bound elements remain readable even on naturally dark silhouettes.
+            glow = icon.copy()
+            glow.fill((*self.blend(color, (255, 255, 255), .35), 0), special_flags=pygame.BLEND_RGBA_ADD)
+            glow.set_alpha(42)
+            icon.blit(glow, (0, 0))
+        if item.upgrade:
+            sparkle = self.blend(ELEMENT_COLORS.get(item.element, COLORS["gold"]), (255, 255, 255), .52)
+            for index in range(min(3, 1 + item.upgrade // 2)):
+                x = max(1, icon.get_width() - 3 - index * 4)
+                y = 2 + index * 4
+                pygame.draw.rect(icon, sparkle, (x, y, 2, 2))
+        if fusion_key:
+            fusion_glint = self.blend(self.item_color(item), (255, 255, 255), .68)
+            glint_x = max(2, icon.get_width() - 7)
+            glint_y = max(2, icon.get_height() // 4)
+            pygame.draw.line(icon, fusion_glint, (glint_x - 3, glint_y), (glint_x + 3, glint_y), 1)
+            pygame.draw.line(icon, fusion_glint, (glint_x, glint_y - 3), (glint_x, glint_y + 3), 1)
+        self.scaled_images[key] = icon
+        return icon
 
     @staticmethod
     def blend(first, second, amount):
@@ -82,6 +170,57 @@ class UI:
         if item and item.element != Element.NEUTRAL:
             return ELEMENT_COLORS[item.element]
         return ITEM_COLORS[item.kind] if item else COLORS["muted"]
+
+    @staticmethod
+    def item_power_text(item):
+        trait_text = {
+            "keen": "sharper criticals",
+            "execution": "wounded-target finisher",
+            "piercing": "armor piercing",
+            "combo": "every third hit x1.65",
+            "guardian": "first-hit guard",
+            "shatter": "blocked hit charges power",
+            "leech": "12% life steal",
+            "boss_hunter": "boss hunter",
+            "last_stand": "survive one lethal hit",
+            "sturdy": "improved full block",
+            "thorns": "reflect damage",
+            "warding": "element ward",
+            "mending": "heal on block",
+            "opener": "opening critical bonus",
+            "alchemist": "stronger potions",
+        }
+        parts = []
+        if item.effects.get("guard_points"):
+            parts.append(f"{int(item.effects['guard_points'])} guard each wave")
+        if item.effects.get("barrier_on_start"):
+            parts.append(f"{int(item.effects['barrier_on_start'])} opening barrier")
+        if item.effects.get("survive_lethal"):
+            parts.append("survive one lethal hit")
+        for value in item.traits:
+            label = trait_text.get(value)
+            if label and label not in parts:
+                parts.append(label)
+        effect_text = {
+            "bleed_chance": "bleed",
+            "burn_chance": "burn",
+            "chill_chance": "frostbite",
+            "poison_chance": "poison",
+            "double_strike_chance": "double strike",
+            "crit_chance": "critical chance",
+            "armor_pierce": "armor pierce",
+            "boss_damage": "boss damage",
+            "block_chance": "block chance",
+            "counter_chance": "counter",
+            "element_resist": "element resist",
+            "element_damage": "element damage",
+            "dodge_chance": "dodge",
+        }
+        for key, label in effect_text.items():
+            value = item.effects.get(key)
+            if value:
+                parts.append(f"{round(value * 100)}% {label}")
+        return "  •  ".join(parts[:3])
 
     def text(self, surface, value, pos, color=None, font="body", anchor="topleft", shadow=False):
         color = color or COLORS["text"]
@@ -199,7 +338,17 @@ class UI:
         size = min(rect.width, rect.height)
         glow = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
         pygame.draw.circle(glow, (*color, 52 if selected else 28), (rect.width // 2, rect.height // 2), max(8, size // 2 - 3))
+        if item.effects.get("fusion_visual"):
+            pulse = self.blend(color, COLORS["gold"], .45)
+            pygame.draw.circle(glow, (*pulse, 78 if selected else 48), (rect.width // 2, rect.height // 2), max(7, size // 2 - 6), 2)
         surface.blit(glow, rect)
+        icon = self.item_sprite(item, max(12, round(size * .82)))
+        if icon:
+            shadow = icon.copy()
+            shadow.fill((5, 6, 8, 115), special_flags=pygame.BLEND_RGBA_MULT)
+            surface.blit(shadow, shadow.get_rect(center=(center[0] + 3, center[1] + 4)))
+            surface.blit(icon, icon.get_rect(center=center))
+            return
         dark = self.blend(color, COLORS["ink"], .55)
         light = self.blend(color, (255, 255, 255), .35)
         cx, cy = center
@@ -259,7 +408,7 @@ class UI:
         stat_rect = pygame.Rect(icon.right + 9, rect.y + 35, rect.width - icon.width - 20, 21)
         self.fitted_text(surface, item.stat_text(), stat_rect, color, "tiny")
         if not compact:
-            tag = item.element.value.upper() if item.element != Element.NEUTRAL else item.kind.value.upper()
+            tag = item.element.value.upper() if item.element != Element.NEUTRAL else item.category_label.upper()
             self.text(surface, tag, (rect.right - 9, rect.bottom - 7), color, "tiny", "bottomright")
         return hovered and clicked
 
@@ -294,6 +443,11 @@ class UI:
             self.text(surface, item.stack, badge.center, COLORS["text"], "tiny", "center")
         if label:
             self.text(surface, label, (rect.x + 7, rect.y + 7), COLORS["muted"], "tiny")
+        if item.tier > 1:
+            pip_y = rect.bottom - 8
+            start_x = rect.centerx - (min(5, item.tier) - 1) * 4
+            for index in range(min(5, item.tier)):
+                pygame.draw.circle(surface, color, (start_x + index * 8, pip_y), 2)
         activated = hovered and clicked
         if activated and self.audio:
             self.audio.play("click")
@@ -322,7 +476,7 @@ class UI:
         name_rect = pygame.Rect(icon.right + 13, rect.y + 19, rect.right - icon.right - 30, 32)
         self.fitted_text(surface, item.display_name, name_rect, COLORS["text"], "medium")
         element = item.element.value.title() if item.element != Element.NEUTRAL else "Unbound"
-        self.text(surface, f"{item.kind.value.title()}  •  {element}", (icon.right + 13, rect.y + 58), color, "small")
+        self.text(surface, f"{item.category_label}  •  {element}", (icon.right + 13, rect.y + 58), color, "small")
         self.text(surface, item.stat_text(), (rect.x + 18, rect.y + 116), COLORS["text"], "body")
         if item.traits:
             traits = "  •  ".join(value.replace("_", " ").title() for value in item.traits)
@@ -369,6 +523,24 @@ class UI:
         old_clip = surface.get_clip()
         surface.set_clip(rect)
         color = ELEMENT_COLORS[element]
+        if rect.width / max(1, rect.height) > 1.45:
+            backdrop = self.asset("battle_backdrop_v2", rect.size)
+            if backdrop:
+                surface.blit(backdrop, rect)
+                tint = pygame.Surface(rect.size, pygame.SRCALPHA)
+                tint.fill((*color, 18 if element == Element.NEUTRAL else 29))
+                surface.blit(tint, rect)
+                # One quiet element cue and a crisp floor anchor; combatants stay dominant.
+                for index in range(5):
+                    px = rect.x + 135 + index * 233
+                    py = rect.bottom - 108 - (index % 2) * 9
+                    alpha = 50 + round(22 * math.sin(clock * 2.1 + index))
+                    mote = pygame.Surface((12, 12), pygame.SRCALPHA)
+                    pygame.draw.circle(mote, (*color, max(18, alpha)), (6, 6), 2 + index % 2)
+                    surface.blit(mote, (px, py))
+                pygame.draw.line(surface, self.blend((95, 76, 58), color, .18), (rect.x, rect.bottom - 82), (rect.right, rect.bottom - 82), 3)
+                surface.set_clip(old_clip)
+                return
         for y in range(rect.y, rect.bottom, 6):
             amount = (y - rect.y) / max(1, rect.height)
             shade = self.blend(self.blend(color, (13, 17, 25), .82), (10, 9, 12), amount)

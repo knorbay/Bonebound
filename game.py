@@ -11,7 +11,7 @@ import pygame
 
 from audio import Audio
 from combat import BattleOutcome, CombatEngine
-from content import ENEMIES, ITEM_TEMPLATES, RECIPES, STAGES, starter_loadout
+from content import ENEMIES, ITEM_TEMPLATES, RECIPES, STAGES, create_endless_stage, starter_loadout
 from models import Element, Hero, ItemKind
 from sprites import CharacterSprites
 from systems import LootSystem, Mixer, SaveError, SaveManager
@@ -32,6 +32,7 @@ class Screen(Enum):
     RECIPES = "recipes"
     BATTLE = "battle"
     LOOT = "loot"
+    EPILOGUE = "epilogue"
 
 
 @dataclass
@@ -68,6 +69,11 @@ class FxBurst:
         layer = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
         radius = 18 + progress * 58
         pygame.draw.circle(layer, (*self.color, alpha // 2), (round(self.x), round(self.y)), round(radius), max(1, round(5 * (1 - progress))))
+        if self.kind in {"hero_hit", "critical"}:
+            slash_width = max(1, round((10 if self.kind == "critical" else 6) * (1 - progress)))
+            slash_rect = pygame.Rect(round(self.x - 88 - progress * 18), round(self.y - 74), round(176 + progress * 36), 148)
+            pygame.draw.arc(layer, (*self.color, alpha), slash_rect, -.88, .74, slash_width)
+            pygame.draw.arc(layer, (255, 250, 226, alpha), slash_rect.inflate(-13, -13), -.88, .74, max(1, slash_width // 3))
         count = 14 if self.kind == "critical" else 9
         for index in range(count):
             angle = index * math.tau / count + progress * .35
@@ -116,11 +122,23 @@ class Game:
         self.confirm_new = False
         self.toast_text = ""
         self.toast_age = 99.0
+        self.craft_result = None
+        self.craft_reveal_age = 99.0
+        self.transition_target = None
+        self.transition_age = 0.0
+        self.transition_duration = .64
+        self.transition_swapped = False
+        self.transition_label = "DESCENDING"
+        self.item_drag_zones = []
+        self.drag_candidate = None
+        self.drag_active = False
+        self.drag_start = (0, 0)
         self.time = 0.0
         self.shake = 0.0
         self.impact_pause = 0.0
         self.hero_hit_flash = 0.0
         self.hero_guard_flash = 0.0
+        self.hero_critical_flash = 0.0
         self.enemy_hit_flash = 0.0
         self.actor_anim_key = {"hero": None, "enemy": None}
         self.actor_anim_started = {"hero": 0.0, "enemy": 0.0}
@@ -128,6 +146,181 @@ class Game:
     def toast(self, text):
         self.toast_text = text
         self.toast_age = 0.0
+
+    def begin_transition(self, target, label="DESCENDING"):
+        self.drag_candidate = None
+        self.drag_active = False
+        self.transition_target = target
+        self.transition_age = 0.0
+        self.transition_swapped = False
+        self.transition_label = label
+
+    def register_item_drag_zone(self, rect, role, item=None, **payload):
+        self.item_drag_zones.append({"rect": pygame.Rect(rect), "role": role, "item": item, **payload})
+
+    def dragged_item(self):
+        if not self.hero or not self.drag_candidate:
+            return None
+        uid = self.drag_candidate.get("uid")
+        item = self.hero.item_by_uid(uid)
+        if item:
+            return item
+        return next((value for value in self.hero.equipment.values() if value and value.uid == uid), None)
+
+    def valid_item_drop(self, zone, item):
+        if not zone or not item:
+            return False
+        role = zone["role"]
+        source_role = self.drag_candidate.get("role") if self.drag_candidate else None
+        if role == "equipment":
+            slot = zone["slot"]
+            if item.kind == ItemKind.RING:
+                return slot in {"ring1", "ring2"}
+            return item.slot == slot
+        if role == "inventory":
+            return source_role == "inventory" or len(self.hero.inventory) < self.hero.inventory_capacity
+        if role in {"mixer_base", "mixer_catalyst"}:
+            return source_role == "inventory" or len(self.hero.inventory) < self.hero.inventory_capacity
+        if role == "boost":
+            return source_role == "inventory" and item.kind == ItemKind.POTION
+        return False
+
+    def finish_item_drag(self, position):
+        item = self.dragged_item()
+        if not item:
+            return
+        target = next((zone for zone in reversed(self.item_drag_zones) if zone["rect"].collidepoint(position) and self.valid_item_drop(zone, item)), None)
+        if not target:
+            self.toast("No valid slot under the item.")
+            return
+        source_role = self.drag_candidate.get("role")
+        source_slot = self.drag_candidate.get("slot")
+        role = target["role"]
+        ok, message = True, ""
+        if role == "equipment":
+            target_slot = target["slot"]
+            if source_role == "equipment":
+                if source_slot == target_slot:
+                    return
+                other = self.hero.equipment.get(target_slot)
+                self.hero.equipment[target_slot], self.hero.equipment[source_slot] = item, other
+                message = f"Moved {item.display_name} to {target_slot.upper()}."
+            else:
+                ok, message = self.hero.equip(item.uid, target_slot)
+            if ok:
+                self.audio.play("equip")
+        elif role == "inventory":
+            if source_role == "equipment":
+                ok, message = self.hero.unequip(source_slot)
+                item = self.hero.item_by_uid(item.uid)
+            if ok and item in self.hero.inventory:
+                self.hero.inventory.remove(item)
+                index = min(int(target.get("index", len(self.hero.inventory))), len(self.hero.inventory))
+                self.hero.inventory.insert(index, item)
+                message = f"Moved {item.display_name}."
+        elif role in {"mixer_base", "mixer_catalyst"}:
+            if source_role == "equipment":
+                ok, message = self.hero.unequip(source_slot)
+                item = self.hero.item_by_uid(item.uid)
+            if ok:
+                if role == "mixer_base":
+                    self.mixer_left = item.uid
+                    if self.mixer_right == item.uid and item.stack < 2:
+                        self.mixer_right = None
+                    message = f"{item.display_name} set as mixer base."
+                elif item.uid != self.mixer_left or item.stack >= 2:
+                    self.mixer_right = item.uid
+                    message = f"{item.display_name} set as catalyst."
+                else:
+                    ok, message = False, "That stack needs two items to fill both mixer sides."
+        elif role == "boost":
+            ok, message = self.hero.set_boost(item.uid)
+            if ok:
+                self.mixer_left = None if self.mixer_left == item.uid else self.mixer_left
+                self.mixer_right = None if self.mixer_right == item.uid else self.mixer_right
+                self.audio.play("potion")
+        if ok:
+            self.selected_uid = item.uid if item else None
+            self.save()
+        self.toast(message)
+
+    def draw_item_drag_overlay(self):
+        if not self.drag_active:
+            return
+        item = self.dragged_item()
+        if not item:
+            return
+        for zone in self.item_drag_zones:
+            if not self.valid_item_drop(zone, item):
+                continue
+            hovered = zone["rect"].collidepoint(self.mouse)
+            if hovered or zone["role"] in {"equipment", "mixer_base", "mixer_catalyst", "boost"}:
+                color = (92, 222, 151) if hovered else self.ui.blend(self.ui.item_color(item), COLORS["border"], .48)
+                pygame.draw.rect(self.screen_surface, color, zone["rect"].inflate(6, 6), 3 if hovered else 1, border_radius=10)
+        ghost = pygame.Rect(0, 0, 76, 76)
+        ghost.center = (self.mouse[0] + 18, self.mouse[1] + 15)
+        shade = pygame.Surface(ghost.size, pygame.SRCALPHA)
+        pygame.draw.rect(shade, (8, 11, 16, 220), shade.get_rect(), border_radius=12)
+        pygame.draw.rect(shade, (*self.ui.item_color(item), 230), shade.get_rect(), 2, border_radius=12)
+        self.screen_surface.blit(shade, ghost)
+        self.ui.draw_item_icon(self.screen_surface, ghost.inflate(-8, -8), item, True)
+
+    def draw_transition(self):
+        if self.transition_target is None:
+            return
+        progress = min(1.0, self.transition_age / self.transition_duration)
+        cover = math.sin(progress * math.pi) ** .72
+        veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        veil.fill((4, 6, 10, round(252 * cover)))
+        self.screen_surface.blit(veil, (0, 0))
+        if cover < .22:
+            return
+        panel = pygame.Rect(0, 0, 430, 128)
+        panel.center = (WIDTH // 2, HEIGHT // 2)
+        alpha = round(235 * min(1.0, cover * 1.35))
+        layer = pygame.Surface(panel.size, pygame.SRCALPHA)
+        pygame.draw.rect(layer, (12, 15, 20, alpha), layer.get_rect(), border_radius=13)
+        pygame.draw.rect(layer, (*COLORS["gold"], alpha), layer.get_rect(), 2, border_radius=13)
+        self.screen_surface.blit(layer, panel)
+        title, _, detail = self.transition_label.partition("•")
+        self.ui.fitted_text(self.screen_surface, title.strip(), pygame.Rect(panel.x + 20, panel.y + 17, panel.width - 40, 35), COLORS["text"], "medium", "center")
+        if detail:
+            self.ui.fitted_text(self.screen_surface, detail.strip(), pygame.Rect(panel.x + 24, panel.y + 51, panel.width - 48, 25), COLORS["muted"], "small", "center")
+        active = int(progress * 12) % 3
+        for index in range(3):
+            x = panel.centerx - 34 + index * 34
+            color = COLORS["gold"] if index == active else COLORS["border"]
+            pygame.draw.polygon(self.screen_surface, color, [(x, panel.y + 99), (x + 7, panel.y + 92), (x + 14, panel.y + 99), (x + 7, panel.y + 106)])
+            pygame.draw.circle(self.screen_surface, color, (x + 2, panel.y + 99), 4)
+            pygame.draw.circle(self.screen_surface, color, (x + 12, panel.y + 99), 4)
+
+    def reveal_craft(self, item):
+        self.craft_result = item
+        self.craft_reveal_age = 0.0
+
+    def draw_craft_reveal(self):
+        if not self.craft_result or self.craft_reveal_age >= 2.35:
+            return
+        age = self.craft_reveal_age
+        fade = min(1.0, age / .16, (2.35 - age) / .42)
+        pop = .82 + .18 * min(1.0, age / .22)
+        width, height = round(440 * pop), round(164 * pop)
+        card = pygame.Rect(0, 0, width, height)
+        card.center = (WIDTH // 2, 194)
+        layer = pygame.Surface(card.size, pygame.SRCALPHA)
+        alpha = max(0, min(255, round(245 * fade)))
+        pygame.draw.rect(layer, (10, 12, 18, alpha), layer.get_rect(), border_radius=14)
+        color = self.ui.item_color(self.craft_result)
+        pygame.draw.rect(layer, (*color, alpha), layer.get_rect(), 3, border_radius=14)
+        self.screen_surface.blit(layer, card)
+        icon_side = max(56, round(108 * pop))
+        icon_rect = pygame.Rect(card.x + 19, card.centery - icon_side // 2, icon_side, icon_side)
+        self.ui.draw_item_icon(self.screen_surface, icon_rect, self.craft_result, True)
+        text_x = icon_rect.right + 18
+        self.ui.text(self.screen_surface, "CRAFT RESULT", (text_x, card.y + 27), COLORS["gold"], "tiny")
+        self.ui.fitted_text(self.screen_surface, self.craft_result.display_name, pygame.Rect(text_x, card.y + 50, card.right - text_x - 18, 33), COLORS["text"], "medium")
+        self.ui.fitted_text(self.screen_surface, self.craft_result.stat_text(), pygame.Rect(text_x, card.y + 91, card.right - text_x - 18, 25), color, "small")
+        self.ui.text(self.screen_surface, "READY FOR THE DESCENT", (text_x, card.y + 124), COLORS["muted"], "tiny")
 
     def animation_elapsed(self, actor, state, fallback_clock):
         if self.screen != Screen.BATTLE or not self.battle:
@@ -161,7 +354,7 @@ class Game:
         self.trash_confirm_uid = None
         self.battle = None
         self.confirm_new = False
-        self.screen = Screen.HUB
+        self.begin_transition(Screen.HUB, "OPENING THE DESCENT")
         self.save()
         self.toast("A new descent begins. Progress is saved automatically.")
 
@@ -189,7 +382,13 @@ class Game:
         self.mixer_right = None
         self.trash_confirm_uid = None
         self.battle = None
-        self.screen = Screen.LOOT if self.hero.pending_loot else Screen.HUB
+        if self.hero.pending_loot:
+            target = Screen.LOOT
+        elif self.hero.campaign_complete and not self.hero.ending_seen:
+            target = Screen.EPILOGUE
+        else:
+            target = Screen.HUB
+        self.begin_transition(target, "RETURNING BELOW")
         self.toast("Save loaded.")
 
     def start_battle(self):
@@ -199,6 +398,17 @@ class Game:
         if stage.index > self.hero.unlocked_stage:
             self.toast("That dungeon is still locked.")
             return
+        self.begin_battle(stage)
+
+    def start_endless(self, depth=None):
+        if not self.hero or not self.hero.campaign_complete:
+            self.toast("The Endless Descent opens after the Hollow Crown falls.")
+            return
+        depth = max(1, int(depth or self.hero.endless_depth + 1))
+        seed = self.hero.campaign_seed * 3000017 + depth * 7919
+        self.begin_battle(create_endless_stage(depth, seed))
+
+    def begin_battle(self, stage):
         seed = self.hero.campaign_seed * 1000003 + stage.index * 9176 + self.hero.battle_counter * 7919
         self.hero.battle_counter += 1
         self.battle = CombatEngine(self.hero, stage, random.Random(seed))
@@ -209,26 +419,34 @@ class Game:
         self.impact_pause = 0.0
         self.hero_hit_flash = 0.0
         self.hero_guard_flash = 0.0
+        self.hero_critical_flash = 0.0
         self.enemy_hit_flash = 0.0
         self.actor_anim_key = {"hero": None, "enemy": None}
         self.actor_anim_started = {"hero": self.time, "enemy": self.time}
         self.mixer_left = None
         self.mixer_right = None
-        self.screen = Screen.BATTLE
+        self.begin_transition(Screen.BATTLE, f"DESCENDING • {stage.name.upper()}")
         self.audio.play("open")
         self.save()
 
     def finish_victory(self):
         stage = self.battle.stage
-        first_clear = stage.index not in self.hero.cleared_stages
+        endless = bool(stage.endless_depth)
+        first_clear = not endless and stage.index not in self.hero.cleared_stages
         self.hero.total_wins += 1
-        self.hero.stage_clear_counts[stage.index] = self.hero.stage_clear_counts.get(stage.index, 0) + 1
-        self.hero.cleared_stages.add(stage.index)
-        if stage.index == self.hero.unlocked_stage and stage.index < len(STAGES):
-            self.hero.unlocked_stage += 1
-        best = self.hero.best_turns.get(stage.index)
-        if best is None or self.battle.turns < best:
-            self.hero.best_turns[stage.index] = self.battle.turns
+        if endless:
+            self.hero.endless_depth = max(self.hero.endless_depth, stage.endless_depth)
+            self.hero.best_endless = max(self.hero.best_endless, stage.endless_depth)
+        else:
+            self.hero.stage_clear_counts[stage.index] = self.hero.stage_clear_counts.get(stage.index, 0) + 1
+            self.hero.cleared_stages.add(stage.index)
+            if stage.index == self.hero.unlocked_stage and stage.index < len(STAGES):
+                self.hero.unlocked_stage += 1
+            best = self.hero.best_turns.get(stage.index)
+            if best is None or self.battle.turns < best:
+                self.hero.best_turns[stage.index] = self.battle.turns
+            if stage.index == len(STAGES):
+                self.hero.campaign_complete = True
         loot_seed = self.hero.campaign_seed * 2000003 + stage.index * 1237 + self.hero.loot_counter * 104729
         loot_rng = random.Random(loot_seed)
         rewards = LootSystem(loot_rng).rewards(stage, first_clear)
@@ -242,7 +460,7 @@ class Game:
                 value = loot_system.salvage_value(item)
                 self.hero.bone_dust += value
                 self.hero.pending_routes.append(f"AUTO-SALVAGED  +{value} DUST")
-        self.hero.pending_stage = stage.index
+        self.hero.pending_stage = -stage.endless_depth if endless else stage.index
         self.hero.loot_counter += 1
         self.battle_processed = True
         self.battle_finish_timer = 1.25
@@ -250,8 +468,8 @@ class Game:
 
     def process_battle_events(self):
         for event in self.battle.drain_events():
-            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns"} and (event.amount or event.blocked):
-                self.audio.play("block" if event.blocked else "critical" if event.critical else "hit")
+            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns", "shield_guard"} and (event.amount or event.blocked):
+                self.audio.play("block" if event.blocked or event.event_type == "shield_guard" else "critical" if event.critical else "hit")
             elif event.event_type == "boost":
                 self.audio.play("potion")
             elif event.event_type in {"victory", "enemy_down"}:
@@ -261,7 +479,12 @@ class Game:
             if event.event_type == "enemy_hit" and event.blocked:
                 self.hero_guard_flash = .34
                 self.impact_pause = max(self.impact_pause, .045)
-            if event.event_type in {"hero_hit", "enemy_hit", "boost", "thorns", "proc", "counter", "heal", "revive", "barrier", "chill"}:
+            if event.event_type == "shield_guard":
+                self.hero_guard_flash = .28
+                self.impact_pause = max(self.impact_pause, .035)
+            if event.event_type == "hero_hit" and event.critical:
+                self.hero_critical_flash = .58
+            if event.event_type in {"hero_hit", "enemy_hit", "boost", "thorns", "proc", "counter", "heal", "revive", "barrier", "shield_guard", "chill"}:
                 x = 870 if event.actor == "enemy" else 330
                 if event.event_type == "enemy_hit":
                     x = 330
@@ -276,6 +499,9 @@ class Game:
                 elif event.event_type == "barrier":
                     text = f"ABSORB {event.amount}"
                     color = (130, 205, 245)
+                elif event.event_type == "shield_guard":
+                    text = f"GUARD -{event.amount}"
+                    color = (86, 184, 236)
                 elif event.blocked:
                     text = "BLOCK"
                     color = (130, 205, 245)
@@ -293,7 +519,7 @@ class Game:
                         self.hero_hit_flash = .18
                     elif event.event_type == "hero_hit" and not event.blocked:
                         self.enemy_hit_flash = .16
-                if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns"} and event.amount:
+            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns", "shield_guard"} and event.amount:
                     burst_y = 438
                     self.fx_bursts.append(FxBurst(x, burst_y, color, "critical" if event.critical else event.event_type))
             if event.event_type == "enemy_down":
@@ -302,9 +528,19 @@ class Game:
     def update(self, dt):
         self.time += dt
         self.toast_age += dt
+        self.craft_reveal_age += dt
+        if self.transition_target is not None:
+            self.transition_age += dt
+            if not self.transition_swapped and self.transition_age >= self.transition_duration * .48:
+                self.screen = self.transition_target
+                self.transition_swapped = True
+            if self.transition_age >= self.transition_duration:
+                self.transition_target = None
+                self.transition_swapped = False
         self.shake = max(0, self.shake - dt)
         self.hero_hit_flash = max(0, self.hero_hit_flash - dt)
         self.hero_guard_flash = max(0, self.hero_guard_flash - dt)
+        self.hero_critical_flash = max(0, self.hero_critical_flash - dt)
         self.enemy_hit_flash = max(0, self.enemy_hit_flash - dt)
         self.float_notices = [notice for notice in self.float_notices if notice.update(dt)]
         self.fx_bursts = [burst for burst in self.fx_bursts if burst.update(dt)]
@@ -322,18 +558,43 @@ class Game:
             if self.battle.outcome == BattleOutcome.VICTORY and self.battle_processed:
                 self.battle_finish_timer -= dt
                 if self.battle_finish_timer <= 0:
-                    self.screen = Screen.LOOT
+                    self.begin_transition(Screen.LOOT, "RECOVERING THE SPOILS")
+                    self.battle_finish_timer = 999.0
 
     def handle_events(self):
         self.clicked = False
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
+            elif self.transition_target is not None:
+                if event.type == pygame.MOUSEMOTION:
+                    self.mouse = event.pos
+                continue
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self.mouse = event.pos
+                source = next((zone for zone in reversed(self.item_drag_zones) if zone.get("item") and zone["rect"].collidepoint(event.pos) and zone["role"] in {"inventory", "equipment"}), None)
+                if source:
+                    self.drag_candidate = {
+                        "uid": source["item"].uid,
+                        "role": source["role"],
+                        "slot": source.get("slot"),
+                        "index": source.get("index"),
+                    }
+                    self.drag_start = event.pos
+                    self.drag_active = False
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 self.mouse = event.pos
-                self.clicked = True
+                if self.drag_active:
+                    self.finish_item_drag(event.pos)
+                    self.clicked = False
+                else:
+                    self.clicked = True
+                self.drag_candidate = None
+                self.drag_active = False
             elif event.type == pygame.MOUSEMOTION:
                 self.mouse = event.pos
+                if self.drag_candidate and pygame.Vector2(event.pos).distance_to(self.drag_start) >= 7:
+                    self.drag_active = True
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if self.confirm_new:
                     self.confirm_new = False
@@ -342,7 +603,7 @@ class Game:
                 elif self.screen == Screen.BATTLE and self.battle and self.battle.active:
                     self.battle.retreat()
                     self.battle_processed = True
-                    self.screen = Screen.HUB
+                    self.begin_transition(Screen.HUB, "LEAVING THE ARENA")
                     self.save()
                 elif self.screen == Screen.RECIPES:
                     self.screen = Screen.MIXER
@@ -352,6 +613,10 @@ class Game:
                     self.hero.pending_loot = []
                     self.hero.pending_routes = []
                     self.hero.pending_stage = 0
+                    self.screen = Screen.EPILOGUE if self.hero.campaign_complete and not self.hero.ending_seen else Screen.HUB
+                    self.save()
+                elif self.screen == Screen.EPILOGUE:
+                    self.hero.ending_seen = True
                     self.screen = Screen.HUB
                     self.save()
                 else:
@@ -371,28 +636,64 @@ class Game:
             self.ui.text(self.screen_surface, f"HP {stats['health']}   ATK {stats['attack']}   DEF {stats['defense']}   LUCK {stats['luck']}", (plaque.right - 15, plaque.y + 16), COLORS["text"], "small", "topright")
             self.ui.text(self.screen_surface, f"BONE DUST {self.hero.bone_dust}   •   BAG {len(self.hero.inventory)}/{self.hero.inventory_capacity}", (plaque.right - 15, plaque.y + 44), COLORS["muted"], "tiny", "topright")
 
+    def draw_brand_mark(self):
+        """Keep the Bonebound identity visible outside the title screen."""
+        if self.screen in {Screen.MAIN_MENU, Screen.BATTLE}:
+            return
+        size = (156, 60)
+        position = ((WIDTH - size[0]) // 2, 9)
+        logo = self.ui.asset("bonebound_logo_v3", size)
+        if not logo:
+            return
+        plate = pygame.Surface((size[0] + 18, size[1] + 10), pygame.SRCALPHA)
+        pygame.draw.rect(plate, (5, 8, 12, 184), plate.get_rect(), border_radius=9)
+        pygame.draw.rect(plate, (112, 82, 43, 155), plate.get_rect(), 1, border_radius=9)
+        plate.blit(logo, (9, 5))
+        self.screen_surface.blit(plate, (position[0] - 9, position[1] - 5))
+
     def draw_main_menu(self):
         self.ui.draw_world_background(self.screen_surface, self.time)
-        doorway = pygame.Rect(345, 86, 510, 660)
-        pygame.draw.rect(self.screen_surface, (20, 18, 21), doorway, border_radius=160)
-        pygame.draw.rect(self.screen_surface, (85, 69, 54), doorway, 16, border_radius=160)
-        pygame.draw.rect(self.screen_surface, (42, 36, 35), doorway.inflate(-34, -34), 5, border_radius=145)
-        inner = doorway.inflate(-55, -55)
-        pygame.draw.rect(self.screen_surface, (7, 8, 12), inner, border_radius=130)
-        for index in range(18):
-            angle = index * math.tau / 18 + self.time * .03
-            radius = 95 + index % 3 * 27
+        wash = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        pygame.draw.rect(wash, (5, 8, 13, 185), (0, 0, 590, HEIGHT))
+        pygame.draw.polygon(wash, (5, 8, 13, 185), [(590, 0), (735, 0), (555, HEIGHT), (410, HEIGHT)])
+        self.screen_surface.blit(wash, (0, 0))
+        doorway = pygame.Rect(642, 92, 462, 714)
+        pygame.draw.rect(self.screen_surface, (8, 9, 13), doorway, border_radius=150)
+        pygame.draw.rect(self.screen_surface, (96, 72, 55), doorway, 12, border_radius=150)
+        pygame.draw.rect(self.screen_surface, (38, 34, 39), doorway.inflate(-28, -28), 4, border_radius=138)
+        inner = doorway.inflate(-46, -46)
+        pygame.draw.rect(self.screen_surface, (7, 8, 13), inner, border_radius=126)
+        for index in range(24):
+            angle = index * math.tau / 24 + self.time * .035
+            radius = 92 + index % 4 * 30
             x = inner.centerx + math.cos(angle) * radius
-            y = inner.centery + 50 + math.sin(angle) * radius * .72
-            pygame.draw.circle(self.screen_surface, (39, 35, 43), (round(x), round(y)), 2 + index % 3)
-        pygame.draw.ellipse(self.screen_surface, (3, 4, 6), (423, 620, 354, 63))
-        self.ui.text(self.screen_surface, "BONEBOUND", (600, 150), COLORS["gold"], "title", "center", True)
-        self.ui.ribbon(self.screen_surface, pygame.Rect(438, 238, 324, 42), "DESCENT", (117, 94, 65), "medium")
+            y = inner.centery + 35 + math.sin(angle) * radius * .78
+            color = (73, 57, 83) if index % 3 == 0 else (48, 43, 51)
+            pygame.draw.circle(self.screen_surface, color, (round(x), round(y)), 2 + index % 3)
+        pygame.draw.ellipse(self.screen_surface, (2, 3, 5), (701, 683, 343, 58))
+        self.ui.ribbon(self.screen_surface, pygame.Rect(88, 112, 230, 34), "AUTOMATIC RPG", (131, 88, 158), "tiny")
+        logo = self.ui.asset("bonebound_logo_v3", (520, 199))
+        if logo:
+            self.screen_surface.blit(logo, (38, 151))
+        else:
+            self.ui.text(self.screen_surface, "BONEBOUND", (86, 225), COLORS["gold"], "title", "midleft", True)
+        pygame.draw.line(self.screen_surface, COLORS["gold"], (91, 349), (500, 349), 2)
+        self.ui.text(self.screen_surface, "DESCENT", (89, 381), COLORS["text"], "large", "midleft")
+        self.ui.wrapped(self.screen_surface, "Build a traveler. Break the dead road. Carry every scar and every item deeper.", pygame.Rect(91, 427, 410, 68), COLORS["muted"], "small", 5, 3)
+        features = (("25", "DUNGEONS"), ("12", "BAG SLOTS"), ("∞", "ENDGAME"))
+        for index, (value, label) in enumerate(features):
+            card = pygame.Rect(90 + index * 143, 505, 128, 76)
+            self.ui.panel(self.screen_surface, card, (14, 20, 28), (47, 61, 76), 9)
+            self.ui.text(self.screen_surface, value, (card.centerx, card.y + 24), COLORS["gold"] if index < 2 else (188, 112, 218), "medium", "center")
+            self.ui.text(self.screen_surface, label, (card.centerx, card.y + 54), COLORS["muted"], "tiny", "center")
         menu_hero = self.sprites.frame("hero", "idle", self.time, 440)
         if menu_hero:
-            self.screen_surface.blit(menu_hero, menu_hero.get_rect(midbottom=(600, 648)))
-        play = pygame.Rect(430, 700, 340, 66)
-        load = pygame.Rect(430, 786, 340, 66)
+            scale = .93 + math.sin(self.time * 2.1) * .008
+            hero_size = (round(menu_hero.get_width() * scale), round(menu_hero.get_height() * scale))
+            menu_hero = pygame.transform.scale(menu_hero, hero_size)
+            self.screen_surface.blit(menu_hero, menu_hero.get_rect(midbottom=(873, 704)))
+        play = pygame.Rect(90, 628, 410, 64)
+        load = pygame.Rect(90, 710, 410, 64)
         modal_was_open = self.confirm_new
         menu_click = self.clicked if not modal_was_open else False
         if self.ui.button(self.screen_surface, play, "PLAY", self.mouse, menu_click, True, COLORS["gold"], "large"):
@@ -402,7 +703,8 @@ class Game:
                 self.new_game()
         if self.ui.button(self.screen_surface, load, "LOAD", self.mouse, menu_click, self.save_manager.exists(), (91, 159, 224), "large"):
             self.load_game()
-        self.ui.text(self.screen_surface, f"EARLY PROTOTYPE  •  v{VERSION}", (600, 900), (104, 96, 88), "tiny", "center")
+        self.ui.text(self.screen_surface, f"EARLY PROTOTYPE  •  v{VERSION}", (92, 815), (104, 96, 88), "tiny")
+        self.ui.text(self.screen_surface, "FIXED-PACE AUTO COMBAT  •  CONTINUOUS SAVE", (92, 849), (86, 92, 104), "tiny")
         if self.confirm_new:
             self.draw_new_confirmation(self.clicked if modal_was_open else False)
 
@@ -502,7 +804,9 @@ class Game:
         self.ui.text(self.screen_surface, stage.index, (detail.centerx, detail.y + 68), COLORS["text"], "large", "center", True)
         self.ui.ribbon(self.screen_surface, pygame.Rect(detail.x + 54, detail.y + 119, detail.width - 108, 32), f"ACT {stage.act}  •  DUNGEON", detail_color, "tiny")
         self.ui.fitted_text(self.screen_surface, stage.name, pygame.Rect(detail.x + 25, detail.y + 161, detail.width - 50, 34), COLORS["text"], "medium", "center")
-        self.ui.text(self.screen_surface, f"RECOMMENDED LEVEL {stage.recommended_level}", (detail.centerx, detail.y + 205), COLORS["muted"], "tiny", "center")
+        reward_name = ITEM_TEMPLATES[stage.first_clear_item]["name"]
+        reward_text = "REWARD CLAIMED" if stage.index in self.hero.cleared_stages else f"FIRST CLEAR  •  {reward_name.upper()}"
+        self.ui.fitted_text(self.screen_surface, f"LEVEL {stage.recommended_level}  •  {reward_text}", pygame.Rect(detail.x + 24, detail.y + 193, detail.width - 48, 25), COLORS["muted"], "tiny", "center")
         self.ui.wrapped(self.screen_surface, stage.description, pygame.Rect(detail.x + 25, detail.y + 234, detail.width - 50, 58), COLORS["text"], "small", 3, 2)
         self.ui.text(self.screen_surface, "THE LINE AHEAD", (detail.x + 24, detail.y + 307), COLORS["muted"], "tiny")
         y = detail.y + 336
@@ -523,7 +827,8 @@ class Game:
         for slot_index, slot in enumerate(("weapon", "shield", "ring1", "ring2")):
             item = self.hero.equipment[slot]
             slot_rect = pygame.Rect(detail.x + 24 + slot_index * 78, equipment_y + 26, 68, 73)
-            self.ui.item_slot(self.screen_surface, slot_rect, item, self.mouse, False, False, slot.replace("ring", "R"))
+            slot_label = {"weapon": "W", "shield": "S", "ring1": "T1", "ring2": "T2"}[slot]
+            self.ui.item_slot(self.screen_surface, slot_rect, item, self.mouse, False, False, slot_label)
         boost = self.hero.item_by_uid(self.hero.boost_uid) if self.hero.boost_uid else None
         boost_rect = pygame.Rect(detail.x + 24, detail.y + 609, 68, 48)
         if boost:
@@ -533,13 +838,19 @@ class Game:
         fight = pygame.Rect(detail.x + 22, detail.bottom - 67, detail.width - 44, 49)
         if self.ui.button(self.screen_surface, fight, "ENTER DUNGEON", self.mouse, self.clicked, True, (213, 89, 75), "medium"):
             self.start_battle()
-        if self.ui.button(self.screen_surface, pygame.Rect(30, 831, 805, 61), "OPEN WORKSHOP  •  GEAR  •  MIXER  •  CHARACTER", self.mouse, self.clicked, True, COLORS["blue"], "medium"):
+        workshop_width = 520 if self.hero.campaign_complete else 805
+        workshop_label = "WORKSHOP  •  GEAR & MIXER" if self.hero.campaign_complete else "OPEN WORKSHOP  •  GEAR  •  MIXER  •  CHARACTER"
+        if self.ui.button(self.screen_surface, pygame.Rect(30, 831, workshop_width, 61), workshop_label, self.mouse, self.clicked, True, COLORS["blue"], "medium"):
             self.return_screen = Screen.HUB
-            self.screen = Screen.INVENTORY
+            self.begin_transition(Screen.INVENTORY, "OPENING THE WORKSHOP")
             self.selected_uid = None
+        if self.hero.campaign_complete:
+            endless_label = f"ENDLESS  •  DEPTH {self.hero.endless_depth + 1}"
+            if self.ui.button(self.screen_surface, pygame.Rect(570, 831, 265, 61), endless_label, self.mouse, self.clicked, True, (158, 87, 202), "small"):
+                self.start_endless()
         if self.ui.button(self.screen_surface, pygame.Rect(855, 831, 315, 61), "SAVE & TITLE", self.mouse, self.clicked, True, COLORS["gold"], "medium"):
             self.save()
-            self.screen = Screen.MAIN_MENU
+            self.begin_transition(Screen.MAIN_MENU, "SEALING THE CHRONICLE")
 
     def find_selected_item(self):
         if not self.hero or not self.selected_uid:
@@ -562,7 +873,7 @@ class Game:
 
     def draw_workshop(self):
         self.ui.draw_world_background(self.screen_surface, self.time)
-        self.header("WORKSHOP", "Loadout, backpack, character growth and the mixer stay on one working surface.")
+        self.header("WORKSHOP", "Hold and drag items between the backpack, gear slots and mixer sockets.")
         character = pygame.Rect(20, 120, 300, 712)
         backpack = pygame.Rect(335, 120, 500, 712)
         forge = pygame.Rect(850, 120, 330, 712)
@@ -575,9 +886,11 @@ class Game:
             rect = pygame.Rect(character.x + 15 + index * 68, character.y + 61, 62, 82)
             equipment_rects[slot] = rect
             item = self.hero.equipment[slot]
-            if self.ui.item_slot(self.screen_surface, rect, item, self.mouse, self.clicked, bool(item and item.uid == self.selected_uid), slot.replace("ring", "R")) and item:
+            slot_label = {"weapon": "W", "shield": "S", "ring1": "T1", "ring2": "T2"}[slot]
+            if self.ui.item_slot(self.screen_surface, rect, item, self.mouse, self.clicked, bool(item and item.uid == self.selected_uid), slot_label) and item:
                 self.selected_uid = item.uid
                 self.trash_confirm_uid = None
+            self.register_item_drag_zone(rect, "equipment", item, slot=slot)
         portrait = pygame.Rect(character.x + 18, character.y + 157, character.width - 36, 235)
         self.ui.draw_cavern(self.screen_surface, portrait, Element.ARCANE, 1, self.time)
         pygame.draw.rect(self.screen_surface, (61, 105, 141), portrait, 2, border_radius=10)
@@ -614,7 +927,9 @@ class Game:
                     self.selected_uid = item.uid
                     self.trash_confirm_uid = None
             else:
+                item = None
                 self.ui.empty_card(self.screen_surface, card, str(index + 1), self.mouse, self.clicked)
+            self.register_item_drag_zone(card, "inventory", item, index=index)
         selected = self.find_selected_item()
         selected_panel = pygame.Rect(backpack.x + 16, backpack.y + 503, backpack.width - 32, 190)
         self.ui.ornamented_panel(self.screen_surface, selected_panel, (13, 19, 27), (49, 65, 82), 9, 1)
@@ -623,7 +938,9 @@ class Game:
             icon = pygame.Rect(selected_panel.x + 16, selected_panel.y + 17, 92, 92)
             self.ui.draw_item_icon(self.screen_surface, icon, selected, True)
             self.ui.fitted_text(self.screen_surface, selected.display_name, pygame.Rect(icon.right + 14, selected_panel.y + 18, selected_panel.width - 140, 28), COLORS["text"], "medium")
-            tag = selected.element.value.upper() if selected.element != Element.NEUTRAL else selected.kind.value.upper()
+            tag = selected.element.value.upper() if selected.element != Element.NEUTRAL else selected.category_label.upper()
+            if selected.kind in {ItemKind.WEAPON, ItemKind.SHIELD, ItemKind.RING}:
+                tag += f"  •  FORGE +{selected.upgrade}/{Mixer._reinforcement_limit(selected)}"
             self.ui.text(self.screen_surface, tag, (icon.right + 14, selected_panel.y + 53), color, "tiny")
             self.ui.fitted_text(self.screen_surface, selected.stat_text(), pygame.Rect(icon.right + 14, selected_panel.y + 76, selected_panel.width - 140, 22), COLORS["text"], "small")
             comparison = ""
@@ -641,8 +958,13 @@ class Game:
                         changes.append(f"{key[:3].upper()} {delta:+d}")
                 comparison = "EQUIP DELTA  " + ("  ".join(changes) if changes else "NO BASE STAT CHANGE")
             if comparison:
-                self.ui.fitted_text(self.screen_surface, comparison, pygame.Rect(selected_panel.x + 18, selected_panel.y + 109, selected_panel.width - 36, 19), (91, 188, 220), "tiny")
-            self.ui.wrapped(self.screen_surface, selected.description, pygame.Rect(selected_panel.x + 18, selected_panel.y + 135 if comparison else selected_panel.y + 116, selected_panel.width - 36, 45), COLORS["muted"], "tiny", 3, 2)
+                comparison_y = selected_panel.y + 128 if self.ui.item_power_text(selected) else selected_panel.y + 109
+                self.ui.fitted_text(self.screen_surface, comparison, pygame.Rect(selected_panel.x + 18, comparison_y, selected_panel.width - 36, 19), (91, 188, 220), "tiny")
+            power_text = self.ui.item_power_text(selected)
+            if power_text:
+                self.ui.fitted_text(self.screen_surface, power_text.upper(), pygame.Rect(selected_panel.x + 18, selected_panel.y + 105, selected_panel.width - 36, 19), COLORS["gold"], "tiny")
+            description_y = selected_panel.y + 151 if comparison and power_text else selected_panel.y + 132 if comparison or power_text else selected_panel.y + 116
+            self.ui.wrapped(self.screen_surface, selected.description, pygame.Rect(selected_panel.x + 18, description_y, selected_panel.width - 36, 38), COLORS["muted"], "tiny", 2, 2)
         else:
             self.ui.text(self.screen_surface, "SELECT AN ITEM", (selected_panel.centerx, selected_panel.y + 69), COLORS["muted"], "medium", "center")
             self.ui.text(self.screen_surface, "Inspect, equip, brew or salvage without leaving this screen.", (selected_panel.centerx, selected_panel.y + 109), (106, 111, 121), "tiny", "center")
@@ -655,19 +977,29 @@ class Game:
             self.mixer_left = None
         if self.ui.item_slot(self.screen_surface, right_rect, right, self.mouse, self.clicked, bool(right), "CATALYST • SPENT"):
             self.mixer_right = None
+        self.register_item_drag_zone(left_rect, "mixer_base", left)
+        self.register_item_drag_zone(right_rect, "mixer_catalyst", right)
         valid, preview = Mixer.preview(left, right)
+        result_preview = Mixer.visual_result(left, right)
         preview_rect = pygame.Rect(forge.x + 17, forge.y + 208, forge.width - 34, 86)
         self.ui.ornamented_panel(self.screen_surface, preview_rect, (18, 18, 25), (99, 72, 119), 8)
         self.ui.text(self.screen_surface, "PREVIEW", (preview_rect.x + 13, preview_rect.y + 10), COLORS["muted"], "tiny")
-        self.ui.wrapped(self.screen_surface, preview, pygame.Rect(preview_rect.x + 13, preview_rect.y + 33, preview_rect.width - 26, 44), (91, 211, 137) if valid else (214, 111, 120), "tiny", 2, 3)
+        preview_text_width = preview_rect.width - (96 if result_preview else 26)
+        self.ui.wrapped(self.screen_surface, preview, pygame.Rect(preview_rect.x + 13, preview_rect.y + 33, preview_text_width, 44), (91, 211, 137) if valid else (214, 111, 120), "tiny", 2, 3)
+        if result_preview:
+            result_rect = pygame.Rect(preview_rect.right - 75, preview_rect.y + 9, 66, 66)
+            self.ui.draw_item_icon(self.screen_surface, result_rect, result_preview, True)
+            self.ui.text(self.screen_surface, "OUTPUT", (result_rect.centerx, preview_rect.bottom - 8), self.ui.item_color(result_preview), "tiny", "midbottom")
         mix_button = pygame.Rect(forge.x + 17, forge.y + 307, 194, 43)
         if self.ui.button(self.screen_surface, mix_button, "MIX ITEMS", self.mouse, self.clicked, valid, (169, 96, 203), "small"):
+            source_template = left.template_id if left else ""
             ok, message, result = Mixer.mix(self.hero, self.mixer_left, self.mixer_right)
             if ok:
                 self.mixer_left = result.uid
                 self.mixer_right = None
                 self.selected_uid = result.uid
-                self.audio.play("confirm")
+                self.audio.play("forge" if result.template_id != source_template else "mix")
+                self.reveal_craft(result)
                 self.save()
             else:
                 self.audio.play("error")
@@ -696,7 +1028,7 @@ class Game:
                 self.toast(message)
             action_y += 51
         elif selected and selected.slot:
-            targets = (("RING I", "ring1"), ("RING II", "ring2")) if selected.kind == ItemKind.RING else (("EQUIP", None),)
+            targets = (("TRINKET I", "ring1"), ("TRINKET II", "ring2")) if selected.kind == ItemKind.RING else (("EQUIP", None),)
             for label, target in targets:
                 width = 138 if len(targets) == 2 else forge.width - 34
                 x = forge.x + 17 if target != "ring2" else forge.right - 155
@@ -704,8 +1036,21 @@ class Game:
                     ok, message = self.hero.equip(selected.uid, target)
                     if ok:
                         self.selected_uid = None
+                        self.audio.play("equip")
                         self.save()
                     self.toast(message)
+            action_y += 51
+        if selected and selected.kind in {ItemKind.WEAPON, ItemKind.SHIELD, ItemKind.RING}:
+            temper_cost = Mixer.reinforcement_cost(selected)
+            temper_ready = selected.upgrade < Mixer._reinforcement_limit(selected) and self.hero.bone_dust >= temper_cost
+            temper_label = f"TEMPER +1  •  {temper_cost} DUST" if selected.upgrade < Mixer._reinforcement_limit(selected) else "MAX TEMPER REACHED"
+            if self.ui.button(self.screen_surface, pygame.Rect(forge.x + 17, action_y, forge.width - 34, 42), temper_label, self.mouse, self.clicked, temper_ready, (225, 145, 65), "small"):
+                ok, message, result = Mixer.temper(self.hero, selected.uid)
+                if ok:
+                    self.audio.play("temper")
+                    self.reveal_craft(result)
+                    self.save()
+                self.toast(message)
             action_y += 51
         if selected and not source_slot and selected.kind == ItemKind.POTION:
             if self.ui.button(self.screen_surface, pygame.Rect(forge.x + 17, action_y, forge.width - 34, 42), "PREPARE BOOST", self.mouse, self.clicked, True, (69, 180, 126), "small"):
@@ -725,6 +1070,7 @@ class Game:
                     self.trash_confirm_uid = None
                     self.mixer_left = None if self.mixer_left == selected.uid else self.mixer_left
                     self.mixer_right = None if self.mixer_right == selected.uid else self.mixer_right
+                    self.audio.play("salvage")
                     self.save()
                     self.toast(f"Salvaged for {value} bone dust.")
                 else:
@@ -745,7 +1091,12 @@ class Game:
         self.ui.ornamented_panel(self.screen_surface, bag_rect, (29, 27, 27), COLORS["wood_light"], 12, 2)
         self.ui.ribbon(self.screen_surface, pygame.Rect(equip_rect.x + 82, equip_rect.y + 18, 196, 33), "LOADOUT", COLORS["blue"], "small")
         self.ui.ribbon(self.screen_surface, pygame.Rect(bag_rect.x + 110, bag_rect.y + 18, 255, 33), f"BACKPACK  {len(self.hero.inventory)}/12", COLORS["wood_light"], "small")
-        labels = {"weapon": "WEAPON", "shield": "SHIELD", "ring1": "RING I", "ring2": "RING II"}
+        labels = {
+            "weapon": "WEAPON",
+            "shield": "SHIELD" if self.hero.equipment.get("shield") else "SHIELD • EMPTY",
+            "ring1": "TRINKET I",
+            "ring2": "TRINKET II",
+        }
         equipment_rects = {
             "weapon": pygame.Rect(equip_rect.x + 18, equip_rect.y + 74, 145, 126),
             "shield": pygame.Rect(equip_rect.right - 163, equip_rect.y + 74, 145, 126),
@@ -793,11 +1144,12 @@ class Game:
                 self.toast(message)
         elif selected and selected.slot:
             if selected.kind == ItemKind.RING:
-                for label, slot in (("EQUIP RING I", "ring1"), ("EQUIP RING II", "ring2")):
+                for label, slot in (("EQUIP TRINKET I", "ring1"), ("EQUIP TRINKET II", "ring2")):
                     if self.ui.button(self.screen_surface, pygame.Rect(detail_rect.x + 16, y, detail_rect.width - 32, 44), label, self.mouse, self.clicked, True, COLORS["blue"], "small"):
                         ok, message = self.hero.equip(selected.uid, slot)
                         if ok:
                             self.selected_uid = None
+                            self.audio.play("equip")
                             self.save()
                         self.toast(message)
                     y += 53
@@ -806,6 +1158,7 @@ class Game:
                     ok, message = self.hero.equip(selected.uid)
                     if ok:
                         self.selected_uid = None
+                        self.audio.play("equip")
                         self.save()
                     self.toast(message)
                 y += 57
@@ -826,6 +1179,7 @@ class Game:
                     self.hero.bone_dust += value
                     self.selected_uid = None
                     self.trash_confirm_uid = None
+                    self.audio.play("salvage")
                     self.save()
                     self.toast(f"Salvaged for {value} bone dust.")
                 else:
@@ -839,7 +1193,7 @@ class Game:
 
     def draw_mixer(self):
         self.ui.draw_world_background(self.screen_surface, self.time)
-        self.header("THE MIXER", "Seat a base item, feed it one catalyst, and inspect the result before committing.")
+        self.header("THE MIXER", "Drag a base and catalyst into the rig; the result is shown before committing.")
         bag = pygame.Rect(25, 120, 505, 712)
         work = pygame.Rect(545, 120, 630, 712)
         self.ui.ornamented_panel(self.screen_surface, bag, (30, 28, 27), COLORS["wood_light"], 12, 2)
@@ -866,14 +1220,20 @@ class Game:
                     else:
                         self.mixer_right = item.uid
             else:
+                item = None
                 self.ui.empty_card(self.screen_surface, card, f"SLOT {index + 1}", self.mouse, self.clicked)
+            self.register_item_drag_zone(card, "inventory", item, index=index)
         left = self.hero.item_by_uid(self.mixer_left)
         right = self.hero.item_by_uid(self.mixer_right)
+        valid, preview = Mixer.preview(left, right)
+        result_preview = Mixer.visual_result(left, right)
         self.ui.ribbon(self.screen_surface, pygame.Rect(work.centerx - 135, work.y + 18, 270, 33), "BUBBLEGUM'S FIELD RIG", (145, 80, 153), "small")
         left_rect = pygame.Rect(work.x + 42, work.y + 82, 168, 176)
         right_rect = pygame.Rect(work.right - 210, work.y + 82, 168, 176)
         self.ui.item_slot(self.screen_surface, left_rect, left, self.mouse, False, bool(left), "BASE • RETURNS")
         self.ui.item_slot(self.screen_surface, right_rect, right, self.mouse, False, bool(right), "CATALYST • SPENT")
+        self.register_item_drag_zone(left_rect, "mixer_base", left)
+        self.register_item_drag_zone(right_rect, "mixer_catalyst", right)
         vessel = (work.centerx, work.y + 205)
         pulse = 3 + math.sin(self.time * 3.2) * 3
         pygame.draw.line(self.screen_surface, (89, 69, 89), (left_rect.right, left_rect.centery), (vessel[0] - 42, vessel[1]), 10)
@@ -884,21 +1244,32 @@ class Game:
         pygame.draw.circle(self.screen_surface, (111, 66, 130), vessel, 55, 5)
         pygame.draw.circle(self.screen_surface, (54, 35, 64), vessel, round(38 + pulse))
         pygame.draw.arc(self.screen_surface, (200, 111, 215), pygame.Rect(vessel[0] - 34, vessel[1] - 34, 68, 68), self.time, self.time + 4.2, 4)
-        self.ui.text(self.screen_surface, "+", vessel, COLORS["gold"], "large", "center", True)
+        if result_preview:
+            output_rect = pygame.Rect(0, 0, 82, 82)
+            output_rect.center = vessel
+            self.ui.draw_item_icon(self.screen_surface, output_rect, result_preview, True)
+        else:
+            self.ui.text(self.screen_surface, "+", vessel, COLORS["gold"], "large", "center", True)
         self.ui.text(self.screen_surface, "BASE ITEM", (left_rect.centerx, left_rect.y - 27), (87, 207, 129), "tiny", "center")
         self.ui.text(self.screen_surface, "CATALYST", (right_rect.centerx, right_rect.y - 27), (226, 91, 96), "tiny", "center")
-        valid, preview = Mixer.preview(left, right)
         preview_rect = pygame.Rect(work.x + 40, work.y + 292, work.width - 80, 108)
         self.ui.ornamented_panel(self.screen_surface, preview_rect, (18, 16, 20), (103, 71, 112), 8)
         self.ui.text(self.screen_surface, "THE RIG PREDICTS", (preview_rect.x + 17, preview_rect.y + 13), COLORS["muted"], "tiny")
-        self.ui.wrapped(self.screen_surface, preview, pygame.Rect(preview_rect.x + 17, preview_rect.y + 42, preview_rect.width - 34, 58), (91, 211, 137) if valid else (218, 115, 119), "small", 4, 2)
+        text_width = preview_rect.width - (132 if result_preview else 34)
+        self.ui.wrapped(self.screen_surface, preview, pygame.Rect(preview_rect.x + 17, preview_rect.y + 42, text_width, 58), (91, 211, 137) if valid else (218, 115, 119), "small", 4, 2)
+        if result_preview:
+            result_rect = pygame.Rect(preview_rect.right - 99, preview_rect.y + 10, 82, 82)
+            self.ui.draw_item_icon(self.screen_surface, result_rect, result_preview, True)
+            self.ui.text(self.screen_surface, "OUTPUT", (result_rect.centerx, preview_rect.bottom - 5), self.ui.item_color(result_preview), "tiny", "midbottom")
         mix_rect = pygame.Rect(work.x + 91, work.y + 422, work.width - 182, 58)
         if self.ui.button(self.screen_surface, mix_rect, "MIX ITEMS", self.mouse, self.clicked, valid, (183, 104, 224), "medium"):
+            source_template = left.template_id if left else ""
             ok, message, result = Mixer.mix(self.hero, self.mixer_left, self.mixer_right)
             if ok:
                 self.mixer_left = result.uid
                 self.mixer_right = None
-                self.audio.play("confirm")
+                self.audio.play("forge" if result.template_id != source_template else "mix")
+                self.reveal_craft(result)
                 self.save()
             else:
                 self.audio.play("error")
@@ -908,9 +1279,9 @@ class Game:
             self.mixer_left, self.mixer_right = self.mixer_right, self.mixer_left
         self.ui.text(self.screen_surface, f"FIELD NOTES  •  {len(self.hero.discovered_recipes)} RECIPES FOUND", (work.x + 42, work.y + 555), COLORS["muted"], "tiny")
         rules = [
-            "Gear holds at most two stat channels.",
-            "Matching gear reinforces; essence binds elements.",
-            "The preview is final. Invalid pairs consume nothing.",
+            "Hold an item, then drag it into either socket.",
+            "Every complete pair creates a unique visible fusion.",
+            "Compatible power transfers; cosmetic fusions still survive.",
         ]
         for i, rule in enumerate(rules):
             pygame.draw.circle(self.screen_surface, (153, 93, 169), (work.x + 48, work.y + 589 + i * 27), 4)
@@ -988,10 +1359,12 @@ class Game:
         self.ui.ribbon(self.screen_surface, pygame.Rect(left_page.centerx - 105, left_page.y + 10, 210, 31), "FIELD FORMULAE I", COLORS["wood_light"], "tiny")
         self.ui.ribbon(self.screen_surface, pygame.Rect(right_page.centerx - 105, right_page.y + 10, 210, 31), "FIELD FORMULAE II", COLORS["wood_light"], "tiny")
         entries = sorted(RECIPES.items(), key=lambda value: ITEM_TEMPLATES[value[1]]["tier"])
+        rows_per_page = max(1, math.ceil(len(entries) / 2))
+        row_step = min(60, max(42, (left_page.height - 60) // rows_per_page))
         for index, (ingredients, output) in enumerate(entries):
-            col, row = divmod(index, 10)
+            col, row = divmod(index, rows_per_page)
             page = left_page if col == 0 else right_page
-            rect = pygame.Rect(page.x + 14, page.y + 53 + row * 60, page.width - 28, 51)
+            rect = pygame.Rect(page.x + 14, page.y + 53 + row * row_step, page.width - 28, row_step - 6)
             key = f"{'+'.join(ingredients)}={output}"
             known = key in self.hero.discovered_recipes
             template = ITEM_TEMPLATES[output]
@@ -1001,15 +1374,16 @@ class Game:
             pygame.draw.rect(self.screen_surface, (38, 34, 31), rect, border_radius=6)
             pygame.draw.rect(self.screen_surface, self.ui.blend(color, (83, 66, 49), .45), rect, 1, border_radius=6)
             seal = (rect.x + 27, rect.centery)
-            pygame.draw.circle(self.screen_surface, (22, 20, 19), seal, 17)
-            pygame.draw.circle(self.screen_surface, color, seal, 16, 2)
+            seal_radius = min(17, max(13, rect.height // 2 - 3))
+            pygame.draw.circle(self.screen_surface, (22, 20, 19), seal, seal_radius + 1)
+            pygame.draw.circle(self.screen_surface, color, seal, seal_radius, 2)
             if known:
                 left_name = ITEM_TEMPLATES[ingredients[0]]["name"]
                 right_name = ITEM_TEMPLATES[ingredients[1]]["name"]
                 output_name = ITEM_TEMPLATES[output]["name"]
                 self.ui.text(self.screen_surface, "✓", seal, color, "small", "center")
-                self.ui.fitted_text(self.screen_surface, f"{left_name} + {right_name}", pygame.Rect(rect.x + 55, rect.y + 3, rect.width - 66, 22), COLORS["muted"], "tiny")
-                self.ui.fitted_text(self.screen_surface, f"=>  {output_name}", pygame.Rect(rect.x + 55, rect.y + 25, rect.width - 66, 22), color, "small")
+                self.ui.fitted_text(self.screen_surface, f"{left_name} + {right_name}", pygame.Rect(rect.x + 55, rect.y + 2, rect.width - 66, rect.height // 2), COLORS["muted"], "tiny")
+                self.ui.fitted_text(self.screen_surface, f"=>  {output_name}", pygame.Rect(rect.x + 55, rect.centery, rect.width - 66, rect.height // 2 - 1), color, "small")
             else:
                 self.ui.text(self.screen_surface, "?", seal, color, "small", "center")
                 self.ui.text(self.screen_surface, "Unknown pairing  =>  Unwritten result", (rect.x + 55, rect.centery), (112, 102, 92), "small", "midleft")
@@ -1019,6 +1393,8 @@ class Game:
     def draw_hero(self, pos, anim, clock, scale=1.22):
         if anim == "defeat":
             display_anim = anim
+        elif self.hero_critical_flash > 0:
+            display_anim = "critical"
         elif self.hero_guard_flash > 0:
             display_anim = "guard"
         elif self.hero_hit_flash > 0:
@@ -1037,19 +1413,36 @@ class Game:
                 pygame.draw.circle(halo, (226, 174, 79, 120), halo.get_rect().center, round(82 * scale), 2)
                 self.screen_surface.blit(halo, halo.get_rect(center=(round(x), round(y - sprite.get_height() * .52))))
             if self.sprites.hero_pixel:
-                source_ground = 64 if display_anim in {"walk", "run", "hurt", "guard"} else 80
+                source_ground = self.sprites.hero_ground or (64 if display_anim in {"walk", "run", "hurt", "guard"} else 80)
                 pixel_scale = round(330 * scale) / 96
                 rect = sprite.get_rect()
                 rect.centerx = round(x)
                 rect.y = round(y + 8 * scale - source_ground * pixel_scale)
             else:
                 rect = sprite.get_rect(midbottom=(round(x), round(y + 15 * scale)))
+            weapon = self.hero.equipment.get("weapon") if self.hero else None
+            if weapon and weapon.element != Element.NEUTRAL:
+                weapon_color = ELEMENT_COLORS[weapon.element]
+                power = min(1.0, .35 + weapon.element_power / 35)
+                focus = (round(rect.x + rect.width * .70), round(rect.y + rect.height * .49))
+                aura = pygame.Surface((180, 170), pygame.SRCALPHA)
+                local_focus = (88, 84)
+                pygame.draw.circle(aura, (*weapon_color, round(24 + 30 * power)), local_focus, round(28 + 18 * power), 3)
+                for index in range(4):
+                    angle = self.time * (1.7 + index * .13) + index * math.tau / 4
+                    radius = 25 + index * 6
+                    point = (round(local_focus[0] + math.cos(angle) * radius), round(local_focus[1] + math.sin(angle) * radius * .72))
+                    pygame.draw.circle(aura, (*weapon_color, round(135 * power)), point, 2 + index % 2)
+                if display_anim in {"attack", "critical"}:
+                    pygame.draw.arc(aura, (*weapon_color, round(210 * power)), pygame.Rect(local_focus[0] - 65, local_focus[1] - 68, 140, 130), -.95, .68, 5 if display_anim == "critical" else 3)
+                self.screen_surface.blit(aura, (focus[0] - local_focus[0], focus[1] - local_focus[1]))
             if self.hero_hit_flash > 0 and anim != "defeat":
                 flash = sprite.copy()
                 flash.fill((95, 65, 70, 0), special_flags=pygame.BLEND_RGB_ADD)
                 self.screen_surface.blit(flash, rect)
             else:
                 self.screen_surface.blit(sprite, rect)
+            self.draw_equipped_gear(rect, display_anim, elapsed)
             return
         if anim == "defeat":
             y += 45 * scale
@@ -1096,42 +1489,175 @@ class Game:
             arc = pygame.Rect(x + 24 * scale, y - 158 * scale, 122 * scale, 122 * scale)
             pygame.draw.arc(self.screen_surface, (*blade_color,), arc, -.8, 1.4, max(2, round(5 * scale)))
 
+    def draw_equipped_gear(self, hero_rect, anim, elapsed):
+        """Lock the exact inventory artwork to the animated hands at its grip."""
+        if not self.hero or anim in {"hurt", "defeat"}:
+            return
+        weapon = self.hero.equipment.get("weapon")
+        shield = self.hero.equipment.get("shield")
+        unit = hero_rect.height / 96
+        pose = {"walk": "run", "ready": "idle"}.get(anim, anim)
+        counts = {"idle": 6, "run": 8, "attack": 8, "critical": 10, "guard": 5, "victory": 6}
+        speeds = {"idle": 5.0, "run": 12.0, "attack": 16.0, "critical": 18.0, "guard": 12.0, "victory": 7.0}
+        count = counts.get(pose, 1)
+        cursor = max(0, int(elapsed * speeds.get(pose, 1.0)))
+        frame = min(count - 1, cursor) if pose in {"attack", "critical", "guard"} else cursor % count
+
+        idle_bob = (0, 0, -1, -1, -1, 0)
+        run_phase = (0, .72, 1, .58, 0, -.72, -1, -.58)
+        run_bob = (0, -1, -2, -1, 0, -1, -2, -1)
+        attack_right = ((64, 44), (54, 32), (48, 24), (62, 26), (80, 40), (94, 54), (88, 60), (72, 48))
+        attack_left = ((26, 56), (22, 56), (20, 54), (24, 52), (32, 54), (40, 56), (38, 58), (30, 56))
+        critical_right = ((62, 48), (52, 36), (42, 24), (38, 16), (50, 14), (74, 24), (98, 44), (104, 60), (88, 60), (70, 48))
+        critical_left = ((24, 60), (20, 60), (16, 58), (14, 54), (18, 50), (28, 48), (40, 54), (44, 58), (38, 60), (28, 58))
+        guard_right = ((64, 56), (66, 58), (68, 60), (68, 60), (66, 58))
+        guard_left = ((48, 52), (56, 50), (64, 48), (66, 48), (56, 50))
+        victory_bob = (0, -2, -3, -3, -2, 0)
+
+        if pose == "attack":
+            right_hand, left_hand = attack_right[frame], attack_left[frame]
+            angle = (0, 34, 67, 82, 54, 12, -42, -10)[frame]
+        elif pose == "critical":
+            right_hand, left_hand = critical_right[frame], critical_left[frame]
+            angle = (-4, 30, 62, 92, 118, 92, 46, -12, -72, -10)[frame]
+        elif pose == "guard":
+            right_hand, left_hand = guard_right[frame], guard_left[frame]
+            angle = -48
+        elif pose == "run":
+            phase = run_phase[frame]
+            bob = run_bob[frame]
+            right_hand = ((32 + round(4 * phase)) * 2, (25 + bob - round(3 * phase)) * 2)
+            left_hand = ((16 + round(4 * phase)) * 2, (25 + bob + round(3 * phase)) * 2)
+            angle = -12 + phase * 8
+        elif pose == "victory":
+            bob = victory_bob[frame]
+            right_hand, left_hand = (58, (10 + bob) * 2), (26, (21 + bob) * 2)
+            angle = 44 + math.sin(elapsed * 2.8) * 3
+        else:
+            bob = idle_bob[frame % len(idle_bob)]
+            right_hand, left_hand = (68, 48 + bob * 2), (28, 54 + bob * 2)
+            angle = -8 + math.sin(elapsed * 2.2) * 2
+
+        right_grip = (hero_rect.x + right_hand[0] * unit, hero_rect.y + right_hand[1] * unit)
+        left_grip = (hero_rect.x + left_hand[0] * unit, hero_rect.y + left_hand[1] * unit)
+
+        def blit_at_grip(image, grip, rotation):
+            pivot = pygame.Vector2(image.get_width() * .10, image.get_height() * .89)
+            center = pygame.Vector2(image.get_rect().center)
+            rotated = pygame.transform.rotate(image, rotation)
+            rotated_center = pygame.Vector2(grip) + (center - pivot).rotate(-rotation)
+            self.screen_surface.blit(rotated, rotated.get_rect(center=(round(rotated_center.x), round(rotated_center.y))))
+
+        if shield:
+            side = max(24, round(24 * unit))
+            image = self.ui.item_sprite(shield, side, crop=True)
+            if image:
+                shield_center = (left_grip[0] - 2 * unit, left_grip[1] + 2 * unit)
+                self.screen_surface.blit(image, image.get_rect(center=(round(shield_center[0]), round(shield_center[1]))))
+                guard_max = getattr(self.battle, "hero_guard_max", 0) if self.battle else 0
+                guard = getattr(self.battle, "hero_guard", 0) if self.battle else 0
+                if guard_max and guard:
+                    ratio = max(0.0, min(1.0, guard / guard_max))
+                    radius = max(15, round(side * .62))
+                    arc_rect = pygame.Rect(0, 0, radius * 2, radius * 2)
+                    arc_rect.center = (round(shield_center[0]), round(shield_center[1]))
+                    guard_color = self.ui.blend(self.ui.item_color(shield), (180, 231, 255), .58)
+                    pygame.draw.arc(self.screen_surface, guard_color, arc_rect, -math.pi / 2, -math.pi / 2 + math.tau * ratio, max(2, round(2.2 * unit)))
+        if weapon:
+            side = max(31, round(30 * unit))
+            image = self.ui.item_sprite(weapon, side, crop=True)
+            if not image:
+                return
+            blit_at_grip(image, right_grip, angle)
+            hand_radius = max(2, round(1.65 * unit))
+            pygame.draw.circle(self.screen_surface, (34, 27, 27), (round(right_grip[0]), round(right_grip[1])), hand_radius + 1)
+            pygame.draw.circle(self.screen_surface, (222, 174, 125), (round(right_grip[0]), round(right_grip[1])), hand_radius)
+
     def draw_enemy(self, pos, enemy, anim, clock):
         color = ELEMENT_COLORS[enemy.element]
         elapsed = self.animation_elapsed("enemy", anim, clock)
         dying = anim == "defeat"
         bob = math.sin(clock * 2.4 + 1) * 3 if anim in {"idle", "ready"} and not dying else 0
-        attack_progress = min(1.0, elapsed / .48)
-        lunge = -28 * math.sin(attack_progress * math.pi) if anim == "attack" and not self.sprites.enemy_pixel else 0
-        x, y = pos.x + lunge, pos.y + bob
-        height = 382 if enemy.boss else 338 if enemy.elite else 300
-        sprite = self.sprites.frame("enemy", "idle" if dying else anim, 0.0 if dying else elapsed, height)
+        attack_progress = min(1.0, elapsed / .52)
+        lunge = 0.0
+        if anim == "attack":
+            if attack_progress < .22:
+                lunge = 11 * (attack_progress / .22)
+            elif attack_progress < .58:
+                strike = (attack_progress - .22) / .36
+                lunge = 11 - 62 * (1 - (1 - strike) ** 3)
+            else:
+                recover = (attack_progress - .58) / .42
+                lunge = -51 * (1 - recover) ** 2
+        hit_kick = 12 * min(1.0, self.enemy_hit_flash / .16) if self.enemy_hit_flash > 0 and not dying else 0
+        x, y = pos.x + lunge + hit_kick, pos.y + bob
+        height = 370 if enemy.boss else 345 if enemy.elite else 320
+        size_scale = {
+            "dust_rat": .72, "bone_scout": .76, "crypt_slinger": .78,
+            "marrow_guard": .84, "ossuary_captain": .88, "cinder_imp": .72,
+            "ash_hound": .74, "furnace_knight": .88, "coal_oracle": .78,
+            "pyre_warden": .88, "rime_widow": .74, "icebound_thrall": .82,
+            "thunder_crow": .72, "hail_sentinel": .86, "tempest_matriarch": .88,
+            "mire_leech": .70, "plague_duelist": .82, "hex_moth": .72,
+            "rune_golem": .90, "alchemist_revenant": .88, "void_acolyte": .80,
+            "crownless_guard": .86, "starved_dragon": .86, "oathbreaker": .86,
+            "hollow_sovereign": .88,
+        }.get(enemy.enemy_id, 1.0)
+        height = round(height * size_scale)
+        max_width = 460 if enemy.boss else 420
+        sprite = self.sprites.frame("enemy", anim, elapsed, height, enemy.enemy_id, max_width)
         if sprite:
-            death_progress = min(1.0, elapsed / .82) if dying else 0.0
-            whiten = min(1.0, death_progress / .34) if dying else 0.0
+            death_progress = min(1.0, elapsed / .88) if dying else 0.0
+            death_flash = max(0.0, 1.0 - abs(death_progress - .16) / .16) if dying else 0.0
             fade = max(0.0, 1.0 - max(0.0, death_progress - .22) / .78) if dying else 1.0
-            shadow_width = round(height * .58) if self.sprites.enemy_pixel else sprite.get_width()
+            if dying:
+                fall = death_progress * death_progress * (3 - 2 * death_progress)
+                sprite = pygame.transform.rotate(sprite, -67 * fall)
+                if death_progress > .46:
+                    collapse = (death_progress - .46) / .54
+                    collapsed_height = max(8, round(sprite.get_height() * (1 - collapse * .48)))
+                    sprite = pygame.transform.scale(sprite, (sprite.get_width(), collapsed_height))
+            elif anim == "attack":
+                impact = math.sin(min(1.0, attack_progress) * math.pi)
+                attack_width = max(1, round(sprite.get_width() * (1 + impact * .10)))
+                attack_height = max(1, round(sprite.get_height() * (1 - impact * .055)))
+                sprite = pygame.transform.scale(sprite, (attack_width, attack_height))
+                sprite = pygame.transform.rotate(sprite, 7 * impact)
+            elif anim == "ready":
+                charge = (math.sin(elapsed * 14) + 1) * .5
+                sprite = pygame.transform.scale(sprite, (max(1, round(sprite.get_width() * (1 + charge * .025))), max(1, round(sprite.get_height() * (1 + charge * .025)))))
+            flyers = {"thunder_crow", "hex_moth", "rime_widow", "tempest_matriarch", "coal_oracle", "hollow_sovereign"}
+            render_y = y - (74 if enemy.enemy_id in flyers else 0)
+            rect = sprite.get_rect(midbottom=(round(x), round(render_y + 18)))
+            if self.battle and self.battle.phase != "approach":
+                safe_frame = pygame.Rect(500, 198, 665, 414)
+                fit = min(1.0, safe_frame.width / max(1, rect.width), safe_frame.height / max(1, rect.height))
+                if fit < 1.0:
+                    sprite = pygame.transform.scale(sprite, (max(1, round(sprite.get_width() * fit)), max(1, round(sprite.get_height() * fit))))
+                    rect = sprite.get_rect(midbottom=(round(x), round(render_y + 18)))
+                rect.clamp_ip(safe_frame)
+            shadow_width = max(46, round(sprite.get_width() * .72))
             shadow = pygame.Surface((shadow_width, 36), pygame.SRCALPHA)
             pygame.draw.ellipse(shadow, (4, 5, 7, round(255 * fade)), shadow.get_rect())
-            body_center_x = x - height * 3 / 64 if self.sprites.enemy_pixel else x
+            body_center_x = rect.centerx
             self.screen_surface.blit(shadow, (body_center_x - shadow_width / 2, y - 4))
             if not dying:
-                if self.sprites.enemy_pixel:
-                    aura_size = (round(height * .78), round(height * .98))
-                    aura_position = (body_center_x - aura_size[0] / 2, y - height * .40 - aura_size[1] / 2)
-                else:
-                    aura_size = (sprite.get_width() + 40, sprite.get_height() + 40)
-                    aura_position = (x - aura_size[0] / 2, y - sprite.get_height() - 22)
+                aura_size = (sprite.get_width() + 40, sprite.get_height() + 40)
+                aura_position = (rect.centerx - aura_size[0] / 2, rect.top - 20)
                 aura = pygame.Surface(aura_size, pygame.SRCALPHA)
                 pygame.draw.ellipse(aura, (*color, 42 if enemy.boss else 27), aura.get_rect().inflate(-12, -12), 7 if enemy.boss else 4)
                 self.screen_surface.blit(aura, aura_position)
-            rect = sprite.get_rect(midbottom=(round(x), round(y + 18)))
+                if anim == "ready":
+                    charge = (math.sin(elapsed * 15) + 1) * .5
+                    ring = pygame.Surface((sprite.get_width() + 70, 42), pygame.SRCALPHA)
+                    pygame.draw.ellipse(ring, (*color, round(80 + 90 * charge)), ring.get_rect().inflate(-8, -12), max(2, round(2 + charge * 3)))
+                    self.screen_surface.blit(ring, (rect.centerx - ring.get_width() / 2, y - 8))
             if dying:
                 body = sprite.copy()
-                body.set_alpha(round(255 * fade * (1.0 - whiten)))
+                body.set_alpha(round(255 * fade))
                 white = sprite.copy()
                 white.fill((255, 255, 255, 0), special_flags=pygame.BLEND_RGBA_MAX)
-                white.set_alpha(round(255 * fade * whiten))
+                white.set_alpha(round(105 * fade * death_flash))
                 self.screen_surface.blit(body, rect)
                 self.screen_surface.blit(white, rect)
             elif self.enemy_hit_flash > 0:
@@ -1140,10 +1666,18 @@ class Game:
                 self.screen_surface.blit(flash, rect)
             else:
                 self.screen_surface.blit(sprite, rect)
+            if anim == "attack" and .28 < attack_progress < .82 and not dying:
+                slash = pygame.Surface((190, 170), pygame.SRCALPHA)
+                slash_alpha = round(210 * math.sin((attack_progress - .28) / .54 * math.pi))
+                pygame.draw.arc(slash, (*color, slash_alpha), pygame.Rect(20, 14, 150, 142), 2.30, 4.05, 6 if enemy.boss else 4)
+                pygame.draw.arc(slash, (255, 242, 218, slash_alpha), pygame.Rect(29, 23, 132, 124), 2.30, 4.05, 2)
+                self.screen_surface.blit(slash, (rect.left - 104, rect.centery - 85))
             if (enemy.elite or enemy.boss) and not dying:
                 pygame.draw.circle(self.screen_surface, color, (rect.centerx, rect.y + 36), 9 if enemy.boss else 6, 2)
             return
         scale = 1.52 if enemy.boss else 1.30 if enemy.elite else 1.18
+        if self.draw_enemy_variant(x, y, enemy, anim, clock, scale):
+            return
         bone = self.ui.blend((216, 210, 184), color, .10)
         dark = self.ui.blend(color, COLORS["ink"], .62)
         pygame.draw.ellipse(self.screen_surface, (4, 5, 7), (x - 70 * scale, y + 13 * scale, 140 * scale, 30 * scale))
@@ -1183,6 +1717,60 @@ class Game:
         pygame.draw.line(self.screen_surface, (78, 58, 43), right_hand, (right_hand[0] + 14 * scale, right_hand[1] - 12 * scale), round(9 * scale))
         pygame.draw.line(self.screen_surface, color, (right_hand[0] + 8 * scale, right_hand[1] - 7 * scale), (right_hand[0] + 77 * scale, right_hand[1] - 72 * scale), round(8 * scale))
 
+    def draw_enemy_variant(self, x, y, enemy, anim, clock, scale):
+        """Distinct silhouettes for beasts, flyers, constructs and humanoids."""
+        eid = enemy.enemy_id
+        color = ELEMENT_COLORS[enemy.element]
+        dark = self.ui.blend(color, COLORS["ink"], .62)
+        light = self.ui.blend(color, COLORS["text"], .24)
+        bob = math.sin(clock * 3.1) * 3
+        if eid in {"dust_rat", "ash_hound", "mire_leech", "starved_dragon"}:
+            body_w = (122 if eid == "starved_dragon" else 88) * scale
+            body_h = (52 if eid != "mire_leech" else 38) * scale
+            pygame.draw.ellipse(self.screen_surface, (3, 5, 8), (x - body_w * .56, y + 11, body_w * 1.12, 25 * scale))
+            pygame.draw.ellipse(self.screen_surface, dark, (x - body_w / 2, y - body_h, body_w, body_h))
+            head_x = x - body_w * .47
+            pygame.draw.circle(self.screen_surface, light, (round(head_x), round(y - body_h * .72)), round(body_h * .36))
+            for leg_x in (-.32, -.08, .22, .39):
+                pygame.draw.line(self.screen_surface, light, (x + body_w * leg_x, y - 12 * scale), (x + body_w * leg_x - 8 * scale, y + 14 * scale), max(4, round(7 * scale)))
+            pygame.draw.circle(self.screen_surface, color, (round(head_x - 8 * scale), round(y - body_h * .78)), max(2, round(3 * scale)))
+            if eid == "starved_dragon":
+                pygame.draw.polygon(self.screen_surface, dark, [(x, y - body_h), (x + 15 * scale, y - 120 * scale), (x + 50 * scale, y - body_h)], 0)
+                pygame.draw.polygon(self.screen_surface, dark, [(x + 28 * scale, y - body_h), (x + 62 * scale, y - 110 * scale), (x + 75 * scale, y - body_h)], 0)
+            return True
+        if eid in {"thunder_crow", "hex_moth", "rime_widow", "tempest_matriarch"}:
+            center = (round(x), round(y - 92 * scale + bob))
+            wing = 66 * scale
+            pygame.draw.polygon(self.screen_surface, dark, [(center[0], center[1]), (center[0] - wing, center[1] - 36 * scale), (center[0] - 42 * scale, center[1] + 30 * scale)])
+            pygame.draw.polygon(self.screen_surface, dark, [(center[0], center[1]), (center[0] + wing, center[1] - 36 * scale), (center[0] + 42 * scale, center[1] + 30 * scale)])
+            pygame.draw.ellipse(self.screen_surface, light, (center[0] - 19 * scale, center[1] - 31 * scale, 38 * scale, 67 * scale))
+            pygame.draw.circle(self.screen_surface, color, center, max(3, round(6 * scale)))
+            return True
+        if eid in {"hail_sentinel", "rune_golem", "furnace_knight", "pyre_warden"}:
+            pygame.draw.ellipse(self.screen_surface, (3, 5, 8), (x - 72 * scale, y + 8, 144 * scale, 28 * scale))
+            torso = pygame.Rect(x - 45 * scale, y - 142 * scale, 90 * scale, 119 * scale)
+            pygame.draw.rect(self.screen_surface, dark, torso, border_radius=round(18 * scale))
+            pygame.draw.rect(self.screen_surface, color, torso, max(3, round(5 * scale)), border_radius=round(18 * scale))
+            pygame.draw.circle(self.screen_surface, light, (round(x), round(y - 169 * scale)), round(29 * scale))
+            pygame.draw.circle(self.screen_surface, color, (round(x), round(y - 169 * scale)), round(10 * scale))
+            for side in (-1, 1):
+                pygame.draw.line(self.screen_surface, dark, (x + side * 39 * scale, y - 117 * scale), (x + side * 66 * scale, y - 45 * scale), round(16 * scale))
+                pygame.draw.line(self.screen_surface, dark, (x + side * 24 * scale, y - 28 * scale), (x + side * 36 * scale, y + 14 * scale), round(19 * scale))
+            return True
+        if eid in {"cinder_imp", "coal_oracle", "icebound_thrall", "plague_duelist", "alchemist_revenant", "void_acolyte", "oathbreaker", "hollow_sovereign"}:
+            pygame.draw.ellipse(self.screen_surface, (3, 5, 8), (x - 65 * scale, y + 10, 130 * scale, 26 * scale))
+            cloak = [(x, y - 155 * scale), (x - 48 * scale, y + 10 * scale), (x + 48 * scale, y + 10 * scale)]
+            pygame.draw.polygon(self.screen_surface, dark, cloak)
+            pygame.draw.lines(self.screen_surface, color, True, cloak, max(2, round(4 * scale)))
+            pygame.draw.circle(self.screen_surface, light, (round(x), round(y - 171 * scale)), round(28 * scale))
+            pygame.draw.rect(self.screen_surface, dark, (x - 25 * scale, y - 178 * scale, 50 * scale, 25 * scale), border_radius=round(8 * scale))
+            pygame.draw.circle(self.screen_surface, color, (round(x - 9 * scale), round(y - 170 * scale)), max(2, round(4 * scale)))
+            pygame.draw.circle(self.screen_surface, color, (round(x + 9 * scale), round(y - 170 * scale)), max(2, round(4 * scale)))
+            if enemy.boss:
+                pygame.draw.polygon(self.screen_surface, color, [(x - 27 * scale, y - 196 * scale), (x - 15 * scale, y - 225 * scale), (x, y - 201 * scale), (x + 15 * scale, y - 225 * scale), (x + 27 * scale, y - 196 * scale)], 3)
+            return True
+        return False
+
     def draw_battle(self):
         element_color = ELEMENT_COLORS[self.battle.enemy.element]
         stage_act = self.battle.stage.act
@@ -1201,8 +1789,14 @@ class Game:
         hero_health = pygame.Rect(hero_plaque.x + 20, hero_plaque.y + 54, hero_plaque.width - 40, 27)
         self.ui.bar(self.screen_surface, hero_health, self.battle.hero_hp, self.battle.hero_max_hp, (204, 57, 69), "HP")
         self.ui.bar(self.screen_surface, pygame.Rect(enemy_plaque.x + 20, enemy_plaque.y + 54, enemy_plaque.width - 40, 27), self.battle.enemy.hp, self.battle.enemy.max_hp, (204, 57, 69), "HP")
-        barrier = f"   BARRIER {self.battle.hero_barrier}" if self.battle.hero_barrier else ""
-        self.ui.text(self.screen_surface, f"ATK {self.battle.hero_attack}   DEF {self.battle.hero_defense}   LUCK {self.battle.hero_luck}{barrier}", (hero_plaque.x + 20, hero_plaque.y + 91), COLORS["muted"], "tiny")
+        defenses = []
+        if self.battle.hero_guard_max:
+            defenses.append(f"GUARD {self.battle.hero_guard}/{self.battle.hero_guard_max}")
+        if self.battle.hero_barrier:
+            defenses.append(f"BARRIER {self.battle.hero_barrier}")
+        defense_text = "   " + "   ".join(defenses) if defenses else "   UNGUARDED"
+        defense_color = COLORS["muted"] if defenses else (218, 132, 86)
+        self.ui.text(self.screen_surface, f"ATK {self.battle.hero_attack}   DEF {self.battle.hero_defense}   LUCK {self.battle.hero_luck}{defense_text}", (hero_plaque.x + 20, hero_plaque.y + 91), defense_color, "tiny")
         self.ui.text(self.screen_surface, f"ATK {self.battle.enemy.attack}   DEF {self.battle.enemy.defense}   LUCK {self.battle.enemy.luck}", (enemy_plaque.right - 20, enemy_plaque.y + 91), COLORS["muted"], "tiny", "topright")
         wave_plate = pygame.Rect(493, 25, 214, 91)
         self.ui.ornamented_panel(self.screen_surface, wave_plate, (16, 22, 30), self.ui.blend(COLORS["gold"], COLORS["border"], .42), 10, 1)
@@ -1214,8 +1808,43 @@ class Game:
             pygame.draw.circle(self.screen_surface, pip_color, (x, wave_plate.y + 66), 6)
         self.ui.text(self.screen_surface, f"ROUND {self.battle.turns}", (600, 131), COLORS["muted"], "tiny", "center")
         self.ui.ribbon(self.screen_surface, pygame.Rect(470, 158, 260, 31), self.battle.stage.name.upper(), self.ui.blend(element_color, COLORS["border"], .5), "tiny")
-        self.draw_hero(pygame.Vector2(330 + shake_x, 574), self.battle.hero_anim, self.battle.anim_clock, 1.36)
-        self.draw_enemy(pygame.Vector2(875 - shake_x, 574), self.battle.enemy, self.battle.enemy_anim, self.battle.anim_clock)
+        hero_x = 330.0
+        enemy_x = 875.0
+        hero_scale = .76
+        if self.battle.phase == "approach":
+            duration = getattr(self.battle, "APPROACH_DURATION", 1.65)
+            approach = max(0.0, min(1.0, 1.0 - self.battle.timer / duration))
+            eased = 1.0 - (1.0 - approach) ** 1.75
+            hero_start = -120 if self.battle.wave_number == 1 else 215
+            hero_x = hero_start + (330 - hero_start) * eased
+            enemy_x = 1280 + (875 - 1280) * eased
+            hero_scale = .64 + .12 * eased
+            entry_layer = pygame.Surface((WIDTH, 666), pygame.SRCALPHA)
+            streak_alpha = round(75 * math.sin(approach * math.pi))
+            for index in range(7):
+                streak_y = 258 + index * 45 + math.sin(self.time * 5 + index) * 7
+                pygame.draw.line(entry_layer, (124, 137, 151, streak_alpha), (0, streak_y), (150 + index * 31, streak_y), 2)
+                pygame.draw.line(entry_layer, (*element_color, streak_alpha), (WIDTH - 160 - index * 23, streak_y + 18), (WIDTH, streak_y + 18), 2)
+            self.screen_surface.blit(entry_layer, (0, 0))
+            for index in range(9):
+                dust_x = hero_x - 38 - index * 17 + (self.time * 120 % 22)
+                dust_y = 589 + math.sin(self.time * 9 + index) * 3
+                radius = max(1, 5 - index)
+                pygame.draw.circle(self.screen_surface, (91, 78, 68), (round(dust_x), round(dust_y)), radius, 1)
+            for index in range(7):
+                dust_x = enemy_x + 34 + index * 18 - (self.time * 108 % 24)
+                dust_y = 589 + math.sin(self.time * 8 + index * .7) * 3
+                pygame.draw.circle(self.screen_surface, self.ui.blend(element_color, (89, 77, 67), .58), (round(dust_x), round(dust_y)), max(1, 4 - index // 2), 1)
+        self.draw_hero(pygame.Vector2(hero_x + shake_x, 574), self.battle.hero_anim, self.battle.anim_clock, hero_scale)
+        self.draw_enemy(pygame.Vector2(enemy_x - shake_x, 574), self.battle.enemy, self.battle.enemy_anim, self.battle.anim_clock)
+        if self.hero_critical_flash > 0:
+            strength = min(1.0, self.hero_critical_flash * 4)
+            slash = pygame.Surface((WIDTH, 666), pygame.SRCALPHA)
+            alpha = round(220 * strength)
+            pygame.draw.arc(slash, (255, 231, 135, alpha), pygame.Rect(535, 265, 350, 260), -.75, .62, 12)
+            pygame.draw.arc(slash, (255, 255, 235, alpha), pygame.Rect(550, 278, 320, 230), -.75, .62, 4)
+            self.screen_surface.blit(slash, (0, 0))
+            self.ui.text(self.screen_surface, "CRITICAL", (600, 218), (255, 211, 84), "large", "center", True)
         for burst in self.fx_bursts:
             burst.draw(self.screen_surface)
         for notice in self.float_notices:
@@ -1236,13 +1865,17 @@ class Game:
         for index, slot in enumerate(("weapon", "shield", "ring1", "ring2")):
             item = self.hero.equipment[slot]
             icon_rect = pygame.Rect(loadout_rect.x + 14 + index * 53, loadout_rect.y + 43, 47, 63)
-            self.ui.item_slot(self.screen_surface, icon_rect, item, self.mouse, False, False, slot.replace("ring", "R"))
+            slot_label = {"weapon": "W", "shield": "S", "ring1": "T1", "ring2": "T2"}[slot]
+            self.ui.item_slot(self.screen_surface, icon_rect, item, self.mouse, False, False, slot_label)
+        equipped_shield = self.hero.equipment.get("shield")
+        shield_status = f"{equipped_shield.display_name}  •  GUARD {self.battle.hero_guard_max}" if equipped_shield else "UNGUARDED  •  FIRST SHIELD: DUNGEON 1"
+        self.ui.fitted_text(self.screen_surface, shield_status, pygame.Rect(loadout_rect.x + 14, loadout_rect.y + 111, loadout_rect.width - 28, 18), self.ui.item_color(equipped_shield) if equipped_shield else (218, 132, 86), "tiny", "center")
         stats = (("ATK", self.battle.hero_attack, (230, 143, 70)), ("DEF", self.battle.hero_defense, (83, 151, 226)), ("LUCK", self.battle.hero_luck, (186, 105, 220)))
         for index, (label, value, color) in enumerate(stats):
             chip = pygame.Rect(loadout_rect.x + 14, loadout_rect.y + 126 + index * 40, loadout_rect.width - 28, 35)
             self.ui.stat_chip(self.screen_surface, chip, label, value, color)
         self.ui.text(self.screen_surface, "BATTLE PACK", (bag_rect.x + 18, bag_rect.y + 14), COLORS["muted"], "tiny")
-        self.ui.text(self.screen_surface, "Potion: boost  •  Gear: field mix", (bag_rect.right - 18, bag_rect.y + 14), COLORS["muted"], "tiny", "topright")
+        self.ui.text(self.screen_surface, "Drag: potion to boost  •  gear to mix", (bag_rect.right - 18, bag_rect.y + 14), COLORS["muted"], "tiny", "topright")
         for index in range(self.hero.inventory_capacity):
             row, col = divmod(index, 6)
             slot_rect = pygame.Rect(bag_rect.x + 17 + col * 94, bag_rect.y + 42 + row * 99, 84, 90)
@@ -1276,7 +1909,9 @@ class Game:
                             self.mixer_right = None
                         self.toast(f"Field mixer: {item.display_name} selected.")
             else:
+                item = None
                 self.ui.empty_card(self.screen_surface, slot_rect, str(index + 1), self.mouse, self.clicked)
+            self.register_item_drag_zone(slot_rect, "inventory", item, index=index)
         boost = self.battle.selected_boost
         self.ui.text(self.screen_surface, "DUNGEON CHRONICLE", (action_rect.x + 16, action_rect.y + 14), COLORS["muted"], "tiny")
         y = action_rect.y + 38
@@ -1297,19 +1932,28 @@ class Game:
             self.ui.text(self.screen_surface, "+", (action_rect.x + 82, action_rect.y + 162), COLORS["gold"], "small", "center")
             if self.ui.item_slot(self.screen_surface, right_socket, right, self.mouse, self.clicked, bool(right), "C"):
                 self.mixer_right = None
+            self.register_item_drag_zone(left_socket, "mixer_base", left)
+            self.register_item_drag_zone(right_socket, "mixer_catalyst", right)
             valid, preview = Mixer.preview(left, right)
-            self.ui.fitted_text(self.screen_surface, preview, pygame.Rect(action_rect.x + 159, action_rect.y + 132, action_rect.width - 177, 49), (92, 205, 139) if valid else COLORS["muted"], "tiny")
+            result_preview = Mixer.visual_result(left, right)
+            preview_width = action_rect.width - (231 if result_preview else 177)
+            self.ui.fitted_text(self.screen_surface, preview, pygame.Rect(action_rect.x + 159, action_rect.y + 132, preview_width, 49), (92, 205, 139) if valid else COLORS["muted"], "tiny")
+            if result_preview:
+                result_rect = pygame.Rect(action_rect.right - 65, action_rect.y + 132, 50, 50)
+                self.ui.draw_item_icon(self.screen_surface, result_rect, result_preview, True)
             if self.ui.button(self.screen_surface, use, "MIX DURING BATTLE", self.mouse, self.clicked, valid and self.battle.active, (169, 96, 203), "small"):
+                source_template = left.template_id if left else ""
                 ok, message, result = Mixer.mix(self.hero, self.mixer_left, self.mixer_right)
                 if ok:
                     self.mixer_left = result.uid
                     self.mixer_right = None
-                    self.audio.play("confirm")
+                    self.audio.play("forge" if result.template_id != source_template else "mix")
+                    self.reveal_craft(result)
                     self.save()
                 self.toast(message)
         else:
+            boost_icon = pygame.Rect(action_rect.x + 18, action_rect.y + 122, 64, 60)
             if boost and not self.battle.boost_used:
-                boost_icon = pygame.Rect(action_rect.x + 18, action_rect.y + 122, 64, 60)
                 self.ui.draw_item_icon(self.screen_surface, boost_icon, boost, True)
                 self.ui.text(self.screen_surface, "PREPARED", (action_rect.x + 91, action_rect.y + 123), COLORS["muted"], "tiny")
                 self.ui.fitted_text(self.screen_surface, boost.display_name, pygame.Rect(action_rect.x + 91, action_rect.y + 143, action_rect.width - 110, 24), self.ui.item_color(boost), "small")
@@ -1318,6 +1962,8 @@ class Game:
                 label = "Boost already used" if self.battle.boost_used else "Select a potion or mix gear"
                 pygame.draw.circle(self.screen_surface, (46, 42, 40), (action_rect.x + 50, action_rect.y + 151), 28, 2)
                 self.ui.fitted_text(self.screen_surface, label, pygame.Rect(action_rect.x + 91, action_rect.y + 137, action_rect.width - 110, 30), COLORS["muted"], "small")
+            if not self.battle.boost_used:
+                self.register_item_drag_zone(boost_icon, "boost", boost)
             if self.ui.button(self.screen_surface, use, "USE BOOST", self.mouse, self.clicked, bool(boost and not self.battle.boost_used and self.battle.active), (75, 190, 119), "medium"):
                 ok, message = self.battle.use_boost()
                 if ok:
@@ -1339,9 +1985,12 @@ class Game:
         self.ui.text(self.screen_surface, f"XP kept  {self.battle.xp_earned}", (rect.centerx, rect.y + 182), COLORS["gold"], "medium", "center")
         self.ui.text(self.screen_surface, "Prepare different gear, mix stronger items, or grind an earlier dungeon.", (rect.centerx, rect.y + 229), COLORS["muted"], "small", "center")
         if self.ui.button(self.screen_surface, pygame.Rect(rect.x + 45, rect.bottom - 104, 195, 54), "RETRY", self.mouse, self.clicked, True, (202, 83, 76), "medium"):
-            self.start_battle()
+            if self.battle.stage.endless_depth:
+                self.start_endless(self.battle.stage.endless_depth)
+            else:
+                self.start_battle()
         if self.ui.button(self.screen_surface, pygame.Rect(rect.right - 240, rect.bottom - 104, 195, 54), "MAP", self.mouse, self.clicked, True, COLORS["border"], "medium"):
-            self.screen = Screen.HUB
+            self.begin_transition(Screen.HUB, "RETURNING TO THE MAP")
 
     def collect_loot(self, item):
         if self.hero.add_item(item):
@@ -1363,14 +2012,17 @@ class Game:
 
     def draw_loot(self):
         self.ui.draw_world_background(self.screen_surface, self.time)
-        self.header("RUN COMPLETE", f"Dungeon {self.hero.pending_stage} is clear. Every reward has already been delivered.")
+        endless = self.hero.pending_stage < 0
+        run_name = f"Endless Depth {-self.hero.pending_stage}" if endless else f"Dungeon {self.hero.pending_stage}"
+        self.header("RUN COMPLETE", f"{run_name} is clear. Every reward has already been delivered.")
         summary = pygame.Rect(35, 120, 1130, 132)
         self.ui.ornamented_panel(self.screen_surface, summary, (35, 30, 25), COLORS["gold"], 12, 2)
         pygame.draw.polygon(self.screen_surface, (93, 56, 32), [(summary.x + 27, summary.y + 92), (summary.x + 27, summary.y + 48), (summary.x + 112, summary.y + 48), (summary.x + 126, summary.y + 92)])
         pygame.draw.arc(self.screen_surface, COLORS["gold"], pygame.Rect(summary.x + 32, summary.y + 14, 88, 76), math.pi, math.tau, 7)
         self.ui.text(self.screen_surface, "VICTORY", (summary.x + 154, summary.y + 26), COLORS["gold"], "large")
-        best = self.hero.best_turns.get(self.hero.pending_stage, 0)
-        self.ui.text(self.screen_surface, f"BEST CLEAR  {best} ROUNDS", (summary.x + 157, summary.y + 82), COLORS["muted"], "tiny")
+        best = self.battle.turns if endless and self.battle else self.hero.best_turns.get(self.hero.pending_stage, 0)
+        best_label = "ENDLESS CLEAR" if endless else "BEST CLEAR"
+        self.ui.text(self.screen_surface, f"{best_label}  {best} ROUNDS", (summary.x + 157, summary.y + 82), COLORS["muted"], "tiny")
         if self.battle:
             data = self.battle.summary()
             values = [("XP", data["xp"]), ("DAMAGE", data["damage"]), ("CRITS", data["criticals"]), ("BLOCKS", data["blocks"])]
@@ -1387,7 +2039,7 @@ class Game:
             rect = pygame.Rect(45 + index * 380, 310, 350, 392)
             item_color = self.ui.item_color(item)
             self.ui.ornamented_panel(self.screen_surface, rect, (34, 30, 27), self.ui.blend(item_color, COLORS["border"], .35), 13, 2)
-            self.ui.ribbon(self.screen_surface, pygame.Rect(rect.x + 56, rect.y + 18, rect.width - 112, 31), item.kind.value.upper(), item_color, "tiny")
+            self.ui.ribbon(self.screen_surface, pygame.Rect(rect.x + 56, rect.y + 18, rect.width - 112, 31), item.category_label.upper(), item_color, "tiny")
             icon = pygame.Rect(rect.centerx - 77, rect.y + 67, 154, 154)
             pygame.draw.circle(self.screen_surface, self.ui.blend(item_color, COLORS["ink"], .79), icon.center, 74)
             pygame.draw.circle(self.screen_surface, item_color, icon.center, 74, 2)
@@ -1402,27 +2054,66 @@ class Game:
         replay = pygame.Rect(365, 832, 300, 59)
         back = pygame.Rect(865, 832, 300, 59)
         if self.ui.button(self.screen_surface, workshop, "OPEN WORKSHOP", self.mouse, self.clicked, True, COLORS["blue"], "medium"):
-            self.return_screen = Screen.HUB
-            self.screen = Screen.INVENTORY
+            self.return_screen = Screen.EPILOGUE if self.hero.campaign_complete and not self.hero.ending_seen else Screen.HUB
+            self.begin_transition(Screen.INVENTORY, "OPENING THE WORKSHOP")
             self.selected_uid = None
             self.hero.pending_loot = []
             self.hero.pending_routes = []
             self.hero.pending_stage = 0
             self.save()
-        if self.ui.button(self.screen_surface, replay, "REPLAY DUNGEON", self.mouse, self.clicked, True, (188, 102, 71), "medium"):
-            self.selected_stage = self.hero.pending_stage
+        replay_label = "REPLAY DEPTH" if endless else "REPLAY DUNGEON"
+        if self.ui.button(self.screen_surface, replay, replay_label, self.mouse, self.clicked, True, (188, 102, 71), "medium"):
+            pending_stage = self.hero.pending_stage
             self.hero.pending_loot = []
             self.hero.pending_routes = []
             self.hero.pending_stage = 0
-            self.start_battle()
-        if self.ui.button(self.screen_surface, back, "RETURN TO MAP", self.mouse, self.clicked, True, COLORS["gold"], "medium"):
+            if pending_stage < 0:
+                self.start_endless(-pending_stage)
+            else:
+                self.selected_stage = pending_stage
+                self.start_battle()
+        back_label = "VIEW EPILOGUE" if self.hero.campaign_complete and not self.hero.ending_seen else "RETURN TO MAP"
+        if self.ui.button(self.screen_surface, back, back_label, self.mouse, self.clicked, True, COLORS["gold"], "medium"):
             self.hero.pending_loot = []
             self.hero.pending_routes = []
             self.hero.pending_stage = 0
             self.save()
-            self.screen = Screen.HUB
+            target = Screen.EPILOGUE if self.hero.campaign_complete and not self.hero.ending_seen else Screen.HUB
+            self.begin_transition(target, "LEAVING THE VAULT")
+
+    def draw_epilogue(self):
+        self.ui.draw_world_background(self.screen_surface, self.time)
+        veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        veil.fill((18, 10, 27, 72))
+        self.screen_surface.blit(veil, (0, 0))
+        self.header("THE CROWN IS HOLLOW", "Campaign complete  •  The descent remembers you")
+        frame = pygame.Rect(90, 130, 1020, 680)
+        self.ui.ornamented_panel(self.screen_surface, frame, (25, 22, 31), (175, 104, 209), 16, 2)
+        portrait = pygame.Rect(frame.x + 38, frame.y + 38, 360, 430)
+        self.ui.draw_cavern(self.screen_surface, portrait, Element.ARCANE, 7, self.time)
+        pygame.draw.rect(self.screen_surface, (176, 101, 207), portrait, 2, border_radius=12)
+        self.draw_hero(pygame.Vector2(portrait.centerx, portrait.bottom - 35), "victory", self.time, 1.05)
+        pygame.draw.polygon(self.screen_surface, COLORS["gold"], [(portrait.centerx - 34, portrait.y + 58), (portrait.centerx - 15, portrait.y + 82), (portrait.centerx, portrait.y + 53), (portrait.centerx + 16, portrait.y + 82), (portrait.centerx + 35, portrait.y + 58), (portrait.centerx + 28, portrait.y + 99), (portrait.centerx - 27, portrait.y + 99)], 3)
+        text_x = frame.x + 445
+        self.ui.text(self.screen_surface, "THE WAYFARER RETURNS", (text_x, frame.y + 51), COLORS["gold"], "large")
+        story = "The Hollow Sovereign falls, but the road beneath the throne does not end. Every enemy, every item and every choice now echoes below in a dungeon that rebuilds itself after each victory."
+        self.ui.wrapped(self.screen_surface, story, pygame.Rect(text_x, frame.y + 119, 510, 118), COLORS["text"], "body", 8, 5)
+        stats = (("LEVEL", self.hero.level), ("WINS", self.hero.total_wins), ("ENEMIES", self.hero.total_enemies), ("RECIPES", f"{len(self.hero.discovered_recipes)}/{len(RECIPES)}"))
+        for index, (label, value) in enumerate(stats):
+            col, row = index % 2, index // 2
+            chip = pygame.Rect(text_x + col * 250, frame.y + 270 + row * 72, 230, 56)
+            self.ui.stat_chip(self.screen_surface, chip, label, value, (183, 103, 216) if col else COLORS["gold"])
+        unlock = pygame.Rect(frame.x + 38, frame.bottom - 164, frame.width - 76, 94)
+        self.ui.ornamented_panel(self.screen_surface, unlock, (35, 25, 43), (175, 104, 209), 11, 2)
+        self.ui.text(self.screen_surface, "ENDLESS DESCENT UNLOCKED", (unlock.x + 24, unlock.y + 18), (208, 139, 235), "medium")
+        self.ui.text(self.screen_surface, "Scaling enemies  •  rotating bosses  •  three automatic drops  •  no final depth", (unlock.x + 26, unlock.y + 57), COLORS["muted"], "small")
+        if self.ui.button(self.screen_surface, pygame.Rect(390, 843, 420, 62), "CONTINUE INTO THE ENDLESS", self.mouse, self.clicked, True, (162, 89, 204), "medium"):
+            self.hero.ending_seen = True
+            self.begin_transition(Screen.HUB, "THE DESCENT CONTINUES")
+            self.save()
 
     def draw(self):
+        self.item_drag_zones = []
         self.audio.music("battle" if self.screen == Screen.BATTLE else "ambient")
         if self.screen == Screen.MAIN_MENU:
             self.draw_main_menu()
@@ -1440,14 +2131,20 @@ class Game:
             self.draw_battle()
         elif self.screen == Screen.LOOT:
             self.draw_loot()
+        elif self.screen == Screen.EPILOGUE:
+            self.draw_epilogue()
+        self.draw_brand_mark()
+        self.draw_craft_reveal()
+        self.draw_item_drag_overlay()
         self.ui.toast(self.screen_surface, self.toast_text, self.toast_age)
+        self.draw_transition()
         pygame.display.flip()
         self.clicked = False
 
     def run_simulation(self):
         self.new_game()
         stats = self.hero.total_stats()
-        if stats != {"health": 40, "attack": 8, "defense": 4, "luck": 3}:
+        if stats != {"health": 55, "attack": 18, "defense": 4, "luck": 3}:
             raise RuntimeError(f"Invalid starting stats: {stats}")
         self.start_battle()
         steps = 0

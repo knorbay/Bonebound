@@ -51,6 +51,8 @@ ELEMENT_ADVANTAGE = {
 
 
 class CombatEngine:
+    APPROACH_DURATION = 1.65
+
     def __init__(self, hero, stage, rng=None):
         self.hero = hero
         self.stage = stage
@@ -59,12 +61,14 @@ class CombatEngine:
         self.hero_max_hp = self.hero_stats["health"]
         self.hero_hp = self.hero_max_hp
         self.hero_barrier = max(0, round(hero.effect_total("barrier_on_start")))
+        self.hero_guard_max = max(0, round(hero.effect_total("guard_points")))
+        self.hero_guard = self.hero_guard_max
         self.bonus_stats = {"attack": 0, "defense": 0, "luck": 0}
         self.enemy_index = -1
         self.enemy = None
         self.outcome = BattleOutcome.ACTIVE
         self.phase = "approach"
-        self.timer = .85
+        self.timer = self.APPROACH_DURATION
         self.turns = 0
         self.defeated = 0
         self.xp_earned = 0
@@ -142,25 +146,35 @@ class CombatEngine:
             self.emit(CombatEvent("victory", f"Dungeon {self.stage.index} cleared in {self.turns} rounds.", "hero"))
             return
         template = ENEMIES[self.stage.enemies[self.enemy_index]]
+        difficulty = max(1.0, float(getattr(self.stage, "difficulty", 1.0)))
+        health_scale = difficulty
+        attack_scale = 1.0 + (difficulty - 1.0) * .72
+        defense_scale = 1.0 + (difficulty - 1.0) * .46
+        max_hp = max(1, round(template.max_hp * health_scale))
         self.enemy_chill = 0.0
+        self.hero_guard = self.hero_guard_max
         self.enemy = EnemyState(
             template.enemy_id,
             template.name,
-            template.max_hp,
-            template.max_hp,
-            template.attack,
-            template.defense,
-            template.luck,
+            max_hp,
+            max_hp,
+            max(1, round(template.attack * attack_scale)),
+            max(0, round(template.defense * defense_scale)),
+            max(0, round(template.luck + (difficulty - 1.0) * 3)),
             template.element,
-            template.xp,
+            max(1, round(template.xp * (1.0 + (difficulty - 1.0) * .58))),
             template.elite,
             template.boss,
         )
         self.phase = "approach"
-        self.timer = .82
+        self.timer = self.APPROACH_DURATION
         self.hero_anim = "walk"
-        self.enemy_anim = "idle"
+        self.enemy_anim = "run"
         self.emit(CombatEvent("wave", f"Wave {self.wave_number}/{self.wave_total}: {self.enemy.name} approaches.", "enemy", element=self.enemy.element))
+        if self.hero_guard:
+            shield = self.hero.equipment.get("shield")
+            shield_name = shield.display_name if shield else "Shield"
+            self.emit(CombatEvent("guard_ready", f"{shield_name} restores {self.hero_guard} guard for this wave.", "hero", self.hero_guard))
 
     def _crit_chance(self, luck):
         bonus = (.05 if self.has_trait("keen") else 0) + self.hero.effect_total("crit_chance")
@@ -176,11 +190,12 @@ class CombatEngine:
         weapon_element = self.hero.weapon_element()
         if weapon_element == Element.NEUTRAL:
             return 1.0
+        power_bonus = min(.22, .05 + self.hero.weapon_element_power() * .01)
         if ELEMENT_ADVANTAGE.get(weapon_element) == self.enemy.element:
-            return 1.25 + min(.15, self.hero.weapon_element_power() / 500) + self.hero.effect_total("element_damage")
+            return 1.25 + power_bonus + self.hero.effect_total("element_damage")
         if weapon_element == self.enemy.element:
-            return .90
-        return 1.0
+            return .90 + power_bonus * .45
+        return 1.0 + power_bonus + self.hero.effect_total("element_damage") * .5
 
     def _element_defense_multiplier(self):
         shield_element = self.hero.shield_element()
@@ -202,17 +217,20 @@ class CombatEngine:
         effective_defense = self.enemy.defense * max(.45, 1 - pierce)
         raw = self.hero_attack * variance - math.floor(effective_defense * .55)
         damage = max(1, round(raw * self._element_attack_multiplier()))
+        weapon = self.hero.equipment.get("weapon")
+        if weapon and weapon.upgrade:
+            damage = max(1, round(damage * (1 + min(.24, weapon.upgrade * .035))))
         if self.hero_hp / self.hero_max_hp <= .30:
             low_bonus = self.hero.effect_total("low_health_attack") + self.hero.effect_total("last_stand_damage")
             damage = round(damage * (1 + low_bonus))
         if self.has_trait("execution") and self.enemy.hp / self.enemy.max_hp <= .25:
-            damage = round(damage * (1.30 + self.hero.effect_total("execute_bonus")))
+            damage = round(damage * (1.40 + self.hero.effect_total("execute_bonus")))
         if self.has_trait("combo") and self.hero_attacks % 3 == 0:
-            damage = round(damage * 1.50)
+            damage = round(damage * 1.65)
         if self.has_trait("boss_hunter") and self.enemy.boss:
             damage = round(damage * (1.18 + self.hero.effect_total("boss_damage")))
         if self.rng.random() < self.hero.effect_total("double_strike_chance"):
-            damage = round(damage * 1.50)
+            damage = round(damage * 1.65)
         if self.shatter_charge:
             damage = round(damage * 1.35)
             self.shatter_charge = False
@@ -239,7 +257,7 @@ class CombatEngine:
             )
             for effect, label, element in proc_data:
                 if self.rng.random() < self.hero.effect_total(effect):
-                    extra = max(1, round(damage * .18))
+                    extra = max(1, round(damage * .28))
                     self.enemy.hp = max(0, self.enemy.hp - extra)
                     self.total_damage += extra
                     proc_events.append(CombatEvent("proc", f"{label} adds {extra} damage.", "hero", extra, element=element))
@@ -330,11 +348,15 @@ class CombatEngine:
         damage_reduction = min(.20, max(0.0, self.hero.effect_total("damage_reduction")))
         if damage_reduction:
             damage = max(1, round(damage * (1 - damage_reduction)))
+        shield_absorbed = 0
         if blocked:
             damage = 0
             self.blocks += 1
             if self.has_trait("mending"):
-                self.hero_hp = min(self.hero_max_hp, self.hero_hp + 2)
+                restored = min(2, self.hero_max_hp - self.hero_hp)
+                self.hero_hp += restored
+                if restored:
+                    self.emit(CombatEvent("heal", f"The shield mend restores {restored} HP.", "hero", restored))
         if damage and self.has_trait("guardian") and not self.guardian_used:
             damage = max(1, round(damage * .50))
             self.guardian_used = True
@@ -344,6 +366,13 @@ class CombatEngine:
             damage = 0
             blocked = True
             self.blocks += 1
+        if damage and self.hero_guard:
+            shield_absorbed = min(self.hero_guard, damage)
+            self.hero_guard -= shield_absorbed
+            damage -= shield_absorbed
+            shield = self.hero.equipment.get("shield")
+            shield_name = shield.display_name if shield else "Shield"
+            self.emit(CombatEvent("shield_guard", f"{shield_name} absorbs {shield_absorbed} damage; {self.hero_guard} guard remains.", "hero", shield_absorbed, element=self.hero.shield_element()))
         if self.hero_barrier and damage:
             absorbed = min(self.hero_barrier, damage)
             self.hero_barrier -= absorbed
@@ -355,6 +384,8 @@ class CombatEngine:
             self.enemy.hp = min(self.enemy.max_hp, self.enemy.hp + max(1, round(damage * .15)))
         if blocked:
             text = "Luck turns the blow into a complete block."
+        elif shield_absorbed and not damage:
+            text = f"{shield_name} absorbs the entire blow."
         elif critical:
             text = f"{self.enemy.name} lands a critical hit for {damage}."
         else:

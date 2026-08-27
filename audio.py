@@ -28,8 +28,18 @@ class Audio:
                 "hit": [modern / "sword_1.ogg", modern / "sword_2.ogg", modern / "sword_3.ogg"],
                 "critical": [modern / "sword_3.ogg", modern / "block_1.ogg"],
                 "block": [modern / "block_1.ogg", modern / "block_2.ogg"],
+                "equip": [root / "impactMetal_medium_002.ogg"],
+                "mix": [root / "glass_003.ogg", root / "confirmation_002.ogg"],
+                "forge": [root / "impactMining_002.ogg", modern / "confirm_deep.ogg"],
+                "temper": [root / "impactMetal_medium_002.ogg", modern / "confirm_deep.ogg"],
+                "salvage": [root / "impactWood_heavy_002.ogg", root / "drop_003.ogg"],
             }
-            volumes = {"click": .14, "open": .17, "confirm": .22, "collect": .21, "error": .20, "potion": .24, "hit": .25, "critical": .29, "block": .25}
+            volumes = {
+                "click": .14, "open": .17, "confirm": .22, "collect": .21,
+                "error": .20, "potion": .24, "hit": .25, "critical": .29,
+                "block": .25, "equip": .22, "mix": .21, "forge": .24,
+                "temper": .23, "salvage": .20,
+            }
             for name, paths in files.items():
                 variants = []
                 for path in paths:

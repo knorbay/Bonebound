@@ -16,7 +16,24 @@ class SaveError(Exception):
 
 
 class SaveManager:
-    VERSION = 2
+    VERSION = 4
+
+    WEAPON_ATTACK_V4 = {
+        "wayfarer_blade": 10,
+        "rusted_falchion": 8,
+        "bone_cleaver": 12,
+        "grave_hook": 14,
+        "emberbrand": 16,
+        "warden_pike": 18,
+        "rimefang": 19,
+        "stormneedle": 20,
+        "venomthorn": 22,
+        "lantern_sabre": 23,
+        "astral_edge": 26,
+        "sunken_king_blade": 29,
+        "voidglass_sabre": 34,
+        "crownless_oath": 38,
+    }
 
     def __init__(self, path=None):
         if path:
@@ -77,7 +94,16 @@ class SaveManager:
                 raise ValueError
             if len(hero_data.get("inventory", [])) > 12 or len(hero_data.get("pending_loot", [])) > 3 or len(hero_data.get("pending_routes", [])) > 3:
                 raise ValueError
+            save_version = int(payload.get("version", 0))
             hero = Hero.from_dict(hero_data)
+            if save_version < 4:
+                for item in hero.inventory + hero.equipment_items():
+                    base_attack = self.WEAPON_ATTACK_V4.get(item.template_id)
+                    if base_attack is None:
+                        continue
+                    target = base_attack + item.upgrade * 2
+                    item.stats["attack"] = max(target, int(item.stats.get("attack", 0)))
+                    item.caps["attack"] = max(target + max(0, 5 - item.upgrade) * 2, int(item.caps.get("attack", 0)))
             selected_stage = int(payload.get("selected_stage", hero.unlocked_stage))
         except SaveError:
             raise
@@ -89,11 +115,54 @@ class SaveManager:
 
 class Mixer:
     PRIMARY_STAT = {ItemKind.WEAPON: "attack", ItemKind.SHIELD: "defense"}
-    PRIMAL_CAP_BONUS_LIMIT = 2
+    PRIMAL_CAP_BONUS_LIMIT = 4
 
     @staticmethod
     def _reinforcement_limit(item):
-        return 3 + max(0, int(item.effects.get("upgrade_cap_bonus", 0)))
+        return 5 + max(0, int(item.effects.get("upgrade_cap_bonus", 0)))
+
+    @classmethod
+    def reinforcement_cost(cls, item):
+        return 14 + item.tier * 8 + item.upgrade * 12
+
+    @classmethod
+    def _reinforce(cls, item):
+        if item.upgrade >= cls._reinforcement_limit(item):
+            return False
+        item.upgrade += 1
+        active = set(cls._active_stats(item))
+        primary = cls.PRIMARY_STAT.get(item.kind)
+        if primary:
+            active.add(primary)
+        for key in active:
+            item.caps[key] = max(item.caps.get(key, 0), item.stats.get(key, 0)) + 2
+        if primary:
+            gain = 2 if item.kind == ItemKind.WEAPON else 1
+            item.stats[primary] = min(item.caps[primary], item.stats.get(primary, 0) + gain)
+        secondary = [key for key in active if key != primary]
+        if secondary and item.upgrade % 2 == 0:
+            key = min(secondary, key=lambda value: (item.stats.get(value, 0), value))
+            item.stats[key] = min(item.caps[key], item.stats.get(key, 0) + 1)
+        if item.element != Element.NEUTRAL:
+            item.element_power = min(100, item.element_power + 5 + item.tier * 2)
+        item.value += 8 + item.tier * 6 + item.upgrade * 3
+        return True
+
+    @classmethod
+    def temper(cls, hero, uid):
+        item = hero.item_by_uid(uid)
+        if not item:
+            item = next((value for value in hero.equipment.values() if value and value.uid == uid), None)
+        if not item or item.kind not in {ItemKind.WEAPON, ItemKind.SHIELD, ItemKind.RING}:
+            return False, "Only equipped gear can be tempered.", None
+        if item.upgrade >= cls._reinforcement_limit(item):
+            return False, f"{item.display_name} is at its reinforcement limit.", item
+        cost = cls.reinforcement_cost(item)
+        if hero.bone_dust < cost:
+            return False, f"Tempering needs {cost} bone dust.", item
+        hero.bone_dust -= cost
+        cls._reinforce(item)
+        return True, f"Tempered {item.display_name} for {cost} bone dust.", item
 
     @staticmethod
     def _active_stats(item):
@@ -133,6 +202,142 @@ class Mixer:
                 channels.add(channel)
         return channels
 
+    @staticmethod
+    def _fusion_name(item, catalyst):
+        from content import ITEM_TEMPLATES
+
+        element_words = {
+            Element.FIRE: "Cinder",
+            Element.ICE: "Rime",
+            Element.STORM: "Storm",
+            Element.VENOM: "Mire",
+            Element.ARCANE: "Astral",
+        }
+        kind_words = {
+            ItemKind.WEAPON: "Edge",
+            ItemKind.SHIELD: "Ward",
+            ItemKind.RING: "Gilded",
+            ItemKind.POTION: "Distilled",
+            ItemKind.ESSENCE: "Prism",
+            ItemKind.MATERIAL: "Grafted",
+        }
+        accent = element_words.get(catalyst.element, kind_words[catalyst.kind])
+        base_template = item.effects.get("fusion_base", item.template_id)
+        base_name = ITEM_TEMPLATES.get(base_template, {}).get("name", item.name)
+        if item.kind == ItemKind.POTION:
+            return f"{accent} Concoction"
+        if item.kind == ItemKind.ESSENCE:
+            return f"{accent} Prism"
+        if item.kind == ItemKind.MATERIAL:
+            return f"{accent} Relic"
+        return f"{accent} {base_name}"
+
+    @classmethod
+    def _stamp_fusion(cls, item, catalyst, effectful):
+        previous = str(item.effects.get("fusion_visual", item.template_id))
+        catalyst_mark = str(catalyst.effects.get("fusion_visual", catalyst.template_id))
+        signature = hashlib.sha256(f"{previous}>{catalyst_mark}>{item.uid}".encode("utf-8")).hexdigest()[:16]
+        item.effects["fusion_visual"] = signature
+        item.effects["fusion_base"] = item.effects.get("fusion_base", item.template_id)
+        item.effects["fusion_catalyst"] = catalyst.effects.get("fusion_base", catalyst.template_id)
+        item.effects["fusion_accent"] = catalyst.element.value if catalyst.element != Element.NEUTRAL else catalyst.kind.value
+        item.name = cls._fusion_name(item, catalyst)
+        item.stack = 1
+        item.max_stack = 1
+        item.tier = min(5, max(item.tier, catalyst.tier))
+        item.value += max(3, catalyst.value // 3) + item.tier * 2
+        if effectful:
+            item.description = "A one-off fusion whose visible inlay carries every compatible trace of its catalyst."
+        else:
+            item.description = "A one-off cosmetic fusion. Its strange inlay changes the object, even when no useful power transfers."
+        return item
+
+    @classmethod
+    def _merge_generic(cls, item, catalyst):
+        """Apply every compatible channel, then always stamp a unique visual fusion."""
+        effectful = False
+        if item.kind in {ItemKind.WEAPON, ItemKind.SHIELD, ItemKind.RING}:
+            if catalyst.kind == ItemKind.ESSENCE and (catalyst.effects.get("raise_element_power") or catalyst.effects.get("upgrade_cap")):
+                power_gain = max(0, int(catalyst.effects.get("raise_element_power", 0)))
+                before_power = item.element_power
+                if item.element != Element.NEUTRAL:
+                    item.element_power = min(100, item.element_power + power_gain)
+                current_cap_bonus = max(0, int(item.effects.get("upgrade_cap_bonus", 0)))
+                cap_gain = min(max(0, int(catalyst.effects.get("upgrade_cap", 0))), max(0, cls.PRIMAL_CAP_BONUS_LIMIT - current_cap_bonus))
+                if cap_gain:
+                    active_stats = set(cls._active_stats(item))
+                    primary_stat = cls.PRIMARY_STAT.get(item.kind)
+                    if primary_stat:
+                        active_stats.add(primary_stat)
+                    for key in active_stats:
+                        item.caps[key] = max(item.caps.get(key, 0), item.stats.get(key, 0)) + cap_gain
+                    item.effects["upgrade_cap_bonus"] = current_cap_bonus + cap_gain
+                effectful = item.element_power != before_power or bool(cap_gain)
+            if catalyst.kind == ItemKind.ESSENCE and catalyst.element != Element.NEUTRAL:
+                before = (item.element, item.element_power)
+                if item.element == catalyst.element:
+                    item.element_power = min(100, item.element_power + 12 + catalyst.tier * 5)
+                else:
+                    item.element = catalyst.element
+                    item.element_power = min(100, 18 + catalyst.tier * 6)
+                effectful = effectful or before != (item.element, item.element_power)
+            active = {key for key, value in item.stats.items() if value}
+            primary = cls.PRIMARY_STAT.get(item.kind)
+            if primary:
+                active.add(primary)
+            for key, value in cls._transferable_stats(catalyst).items():
+                if key not in active and len(active) >= 2:
+                    continue
+                cap = item.caps.get(key, max(item.stats.get(key, 0) + abs(value) * 3, abs(value)))
+                before = item.stats.get(key, 0)
+                item.caps[key] = max(item.caps.get(key, 0), cap)
+                item.stats[key] = min(item.caps[key], before + value)
+                if item.stats[key] != before:
+                    active.add(key)
+                    effectful = True
+            if item.template_id == catalyst.template_id and item.kind == catalyst.kind:
+                effectful = cls._reinforce(item) or effectful
+                for key in set(item.caps) | set(catalyst.caps):
+                    item.caps[key] = max(item.caps.get(key, 0), catalyst.caps.get(key, 0), item.stats.get(key, 0))
+                before_power = item.element_power
+                item.element_power = min(100, item.element_power + catalyst.element_power // 2)
+                effectful = effectful or item.element_power != before_power
+        elif item.kind == ItemKind.POTION:
+            allowed = {"heal_flat", "heal_percent", "revive_percent", "battle_attack", "battle_defense", "battle_luck", "duration_turns"}
+            if catalyst.kind == ItemKind.POTION:
+                for key, value in catalyst.effects.items():
+                    if key not in allowed or not isinstance(value, (int, float)):
+                        continue
+                    before = item.effects.get(key, 0)
+                    if key == "duration_turns":
+                        item.effects[key] = max(before, value)
+                    elif key == "heal_flat":
+                        item.effects[key] = min(120, before + value)
+                    elif key in {"heal_percent", "revive_percent"}:
+                        item.effects[key] = min(1.0, before + value)
+                    else:
+                        item.effects[key] = min(15, before + value)
+                    effectful = effectful or item.effects[key] != before
+            elif catalyst.kind == ItemKind.ESSENCE and catalyst.element != Element.NEUTRAL:
+                before = (item.element, item.element_power)
+                item.element = catalyst.element
+                item.element_power = max(item.element_power, 12 + catalyst.tier * 5)
+                effectful = before != (item.element, item.element_power)
+            item.template_id = "blended_tonic"
+        elif item.kind == ItemKind.ESSENCE:
+            if catalyst.kind == ItemKind.ESSENCE:
+                before = (item.tier, item.element_power)
+                item.tier = min(5, max(item.tier, catalyst.tier) + 1)
+                item.element_power = min(100, item.element_power + catalyst.element_power)
+                effectful = before != (item.tier, item.element_power)
+        elif item.kind == ItemKind.MATERIAL:
+            before = (item.value, item.tier)
+            item.value += max(1, catalyst.value // 2)
+            item.tier = min(5, max(item.tier, catalyst.tier) + (1 if item.template_id == catalyst.template_id else 0))
+            effectful = before != (item.value, item.tier)
+        cls._stamp_fusion(item, catalyst, effectful)
+        return effectful
+
     @classmethod
     def preview(cls, left, right):
         if not left or not right:
@@ -144,65 +349,26 @@ class Mixer:
         special = recipe_result(left.template_id, right.template_id)
         if special:
             return True, f"Special recipe: forge {ITEM_TEMPLATES[special]['name']}. Compatible upgrades and bonus stats carry over from the left, replacing optional quality rolls when needed."
-        if left.kind in {ItemKind.WEAPON, ItemKind.SHIELD, ItemKind.RING}:
-            if right.kind == ItemKind.ESSENCE and (right.effects.get("raise_element_power") or right.effects.get("upgrade_cap")):
-                power_gain = max(0, int(right.effects.get("raise_element_power", 0)))
-                current_cap_bonus = max(0, int(left.effects.get("upgrade_cap_bonus", 0)))
-                cap_gain = min(
-                    max(0, int(right.effects.get("upgrade_cap", 0))),
-                    max(0, cls.PRIMAL_CAP_BONUS_LIMIT - current_cap_bonus),
-                )
-                benefits = []
-                if left.element != Element.NEUTRAL and power_gain and left.element_power < 100:
-                    benefits.append(f"element power +{min(power_gain, 100 - left.element_power)}")
-                if cap_gain:
-                    benefits.append(f"stat and reinforcement caps +{cap_gain}")
-                if not benefits:
-                    return False, f"{left.display_name} cannot absorb more primal power."
-                return True, f"Primal refinement: {', '.join(benefits)}. {left.display_name} survives."
-            if right.kind == ItemKind.ESSENCE and right.element != Element.NEUTRAL:
-                if left.element == right.element:
-                    if left.element_power >= 100:
-                        return False, f"{left.display_name} has reached maximum elemental power."
-                    return True, f"Reinforce {left.element.value} power. {left.display_name} survives."
-                return True, f"Bind {right.element.value} to {left.display_name}. The old element is replaced."
-            incoming = cls._transferable_stats(right)
-            if not incoming and right.template_id != left.template_id:
-                return False, "That ingredient carries nothing this gear can absorb."
-            active = set(cls._active_stats(left))
-            primary = cls.PRIMARY_STAT.get(left.kind)
-            if primary:
-                active.add(primary)
-            new_stats = [key for key in incoming if key not in active]
-            if len(active | set(new_stats)) > 2:
-                return False, "Gear can hold at most two attributes. Use a matching ingredient."
-            if left.template_id == right.template_id and left.kind == right.kind:
-                reinforcement_limit = cls._reinforcement_limit(left)
-                if left.upgrade >= reinforcement_limit:
-                    return False, f"{left.display_name} has reached the +{reinforcement_limit} reinforcement limit."
-                return True, f"Reinforce the matching gear and raise its limits. {left.display_name} survives."
-            transferable = False
-            for key, value in incoming.items():
-                cap = left.caps.get(key, max(left.stats.get(key, 0) + abs(value) * 3, abs(value)))
-                if left.stats.get(key, 0) < cap:
-                    transferable = True
-                    break
-            if incoming and not transferable:
-                return False, "Every matching attribute is already at this item's capacity."
-            names = ", ".join(key.upper() for key in incoming)
-            return True, f"Transfer {names} into {left.display_name}. The right item is consumed."
-        if left.kind == ItemKind.POTION and right.kind == ItemKind.POTION:
-            keys = cls._potion_channels(left) | cls._potion_channels(right)
-            if len(keys) > 2:
-                return False, "A tonic can contain at most two effects."
-            return True, "Blend both potion effects into one stronger tonic. The left bottle survives."
-        if left.kind == ItemKind.ESSENCE and right.kind == ItemKind.ESSENCE:
-            if left.element != right.element:
-                return False, "Opposing raw essences refuse to bind without equipment."
-            return True, f"Refine the {left.element.value} essence to a higher tier."
-        if left.kind == ItemKind.MATERIAL and right.kind == ItemKind.MATERIAL and left.template_id == right.template_id:
-            return True, "Compress matching materials into a more valuable bundle."
-        return False, "These item types do not produce a stable mixture."
+        return True, "Experimental fusion: the catalyst is consumed and a unique inlaid item is created. Compatible power transfers when possible; otherwise the result is cosmetic."
+
+    @classmethod
+    def visual_result(cls, left, right):
+        """Build a non-mutating item preview for the mixer's output socket."""
+        valid, _ = cls.preview(left, right)
+        if not valid:
+            return None
+        from content import create_item, recipe_result
+
+        special = recipe_result(left.template_id, right.template_id)
+        if special:
+            stage = max(1, min(25, max(left.tier, right.tier) * 5))
+            result = create_item(special, random.Random(0), stage)
+            result.uid = "mix-preview"
+            return result
+        result = Item.from_dict(left.to_dict())
+        result.uid = "mix-preview"
+        cls._merge_generic(result, right)
+        return result
 
     @classmethod
     def mix(cls, hero, left_uid, right_uid):
@@ -244,7 +410,7 @@ class Mixer:
             upgrade_cap_bonus = max(0, int(left.effects.get("upgrade_cap_bonus", 0)))
             if upgrade_cap_bonus:
                 crafted.effects["upgrade_cap_bonus"] = upgrade_cap_bonus
-            crafted.upgrade = min(3 + upgrade_cap_bonus, left.upgrade)
+            crafted.upgrade = min(5 + upgrade_cap_bonus, left.upgrade)
             for key, old_value in left.stats.items():
                 inherited = max(0, old_value - old_base.get(key, 0))
                 if not inherited:
@@ -276,82 +442,9 @@ class Mixer:
             if levels:
                 suffix += f" Level {hero.level} reached."
             return True, f"Forged {crafted.display_name}.{suffix}", crafted
-        if left.kind in {ItemKind.WEAPON, ItemKind.SHIELD, ItemKind.RING}:
-            if consumed.kind == ItemKind.ESSENCE and (consumed.effects.get("raise_element_power") or consumed.effects.get("upgrade_cap")):
-                power_gain = max(0, int(consumed.effects.get("raise_element_power", 0)))
-                current_cap_bonus = max(0, int(left.effects.get("upgrade_cap_bonus", 0)))
-                cap_gain = min(
-                    max(0, int(consumed.effects.get("upgrade_cap", 0))),
-                    max(0, cls.PRIMAL_CAP_BONUS_LIMIT - current_cap_bonus),
-                )
-                gained_power = 0
-                if left.element != Element.NEUTRAL and power_gain:
-                    before = left.element_power
-                    left.element_power = min(100, left.element_power + power_gain)
-                    gained_power = left.element_power - before
-                if cap_gain:
-                    active = set(cls._active_stats(left))
-                    primary = cls.PRIMARY_STAT.get(left.kind)
-                    if primary:
-                        active.add(primary)
-                    for key in active:
-                        left.caps[key] = max(left.caps.get(key, 0), left.stats.get(key, 0)) + cap_gain
-                    left.effects["upgrade_cap_bonus"] = max(0, int(left.effects.get("upgrade_cap_bonus", 0))) + cap_gain
-                details = []
-                if gained_power:
-                    details.append(f"element power +{gained_power}")
-                if cap_gain:
-                    details.append(f"stat and reinforcement caps +{cap_gain}")
-                return True, f"Refined {left.display_name}: {', '.join(details)}.", left
-            if consumed.kind == ItemKind.ESSENCE and consumed.element != Element.NEUTRAL:
-                if left.element == consumed.element:
-                    left.element_power = min(100, left.element_power + 12 + consumed.tier * 5)
-                else:
-                    left.element = consumed.element
-                    left.element_power = min(100, 18 + consumed.tier * 6)
-            for key, value in cls._transferable_stats(consumed).items():
-                cap = left.caps.get(key, max(left.stats.get(key, 0) + abs(value) * 3, abs(value)))
-                left.caps[key] = cap
-                left.stats[key] = min(cap, left.stats.get(key, 0) + value)
-            if left.template_id == consumed.template_id and left.kind == consumed.kind:
-                left.upgrade += 1
-                for key in set(left.caps) | set(consumed.caps):
-                    left.caps[key] = max(left.caps.get(key, 0), consumed.caps.get(key, 0)) + 1
-                primary = cls.PRIMARY_STAT.get(left.kind)
-                if primary:
-                    left.stats[primary] = min(left.caps.get(primary, 999), left.stats.get(primary, 0) + 1)
-                left.element_power = min(100, left.element_power + consumed.element_power // 2)
-            return True, f"Created {left.display_name}. The ingredient was consumed.", left
-        if left.kind == ItemKind.POTION:
-            for key, value in consumed.effects.items():
-                if not isinstance(value, (int, float)):
-                    continue
-                if key == "duration_turns":
-                    left.effects[key] = max(left.effects.get(key, 0), value)
-                elif key == "heal_flat":
-                    left.effects[key] = min(120, left.effects.get(key, 0) + value)
-                elif key in {"heal_percent", "revive_percent"}:
-                    left.effects[key] = min(1.0, left.effects.get(key, 0) + value)
-                else:
-                    left.effects[key] = min(15, left.effects.get(key, 0) + value)
-            for key, value in consumed.stats.items():
-                left.stats[key] = left.stats.get(key, 0) + value
-            left.tier = min(5, max(left.tier, consumed.tier) + (1 if left.template_id == consumed.template_id else 0))
-            left.name = "Blended Tonic" if left.template_id != consumed.template_id else left.name
-            left.template_id = "blended_tonic"
-            left.description = "A field tonic shaped by the two ingredients mixed into it."
-            return True, f"Brewed {left.display_name}. The right bottle was consumed.", left
-        if left.kind == ItemKind.ESSENCE:
-            left.tier = min(5, max(left.tier, consumed.tier) + 1)
-            left.element_power = min(100, left.element_power + consumed.element_power)
-            left.name = f"Refined {left.element.value.title()} Essence"
-            return True, f"Refined the essence to tier {left.tier}.", left
-        if left.kind == ItemKind.MATERIAL:
-            left.value += consumed.value
-            left.tier = min(5, max(left.tier, consumed.tier) + 1)
-            left.name = f"Compressed {left.name}"
-            return True, f"Compressed the material bundle to tier {left.tier}.", left
-        return False, "The mixture collapsed.", None
+        effectful = cls._merge_generic(left, consumed)
+        detail = "Compatible power transferred." if effectful else "No combat power transferred; the fusion is visual and collectible."
+        return True, f"Created {left.display_name}. {detail}", left
 
 
 class LootSystem:

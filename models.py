@@ -65,6 +65,12 @@ class Item:
         return None
 
     @property
+    def category_label(self):
+        if self.kind == ItemKind.RING:
+            return str(self.effects.get("accessory_form", "Trinket")).title()
+        return self.kind.value.title()
+
+    @property
     def attribute_count(self):
         return sum(1 for value in self.stats.values() if value)
 
@@ -107,6 +113,12 @@ class Item:
             for effect, label in (("battle_attack", "ATK"), ("battle_defense", "DEF"), ("battle_luck", "LUCK")):
                 if self.effects.get(effect):
                     parts.append(f"+{int(self.effects[effect])} {label}")
+            if self.effects.get("duration_turns") and any(self.effects.get(effect) for effect in ("battle_attack", "battle_defense", "battle_luck")):
+                parts.append(f"{int(self.effects['duration_turns'])} turns")
+        if self.kind == ItemKind.SHIELD and self.effects.get("guard_points"):
+            parts.append(f"Guard {int(self.effects['guard_points'])}/wave")
+        if self.effects.get("barrier_on_start"):
+            parts.append(f"Barrier +{int(self.effects['barrier_on_start'])}")
         return "  •  ".join(parts) if parts else "No stat bonus"
 
     def to_dict(self):
@@ -178,6 +190,8 @@ class Stage:
     loot_rolls: int
     description: str
     act: int
+    difficulty: float = 1.0
+    endless_depth: int = 0
 
 
 class Hero:
@@ -185,7 +199,7 @@ class Hero:
         self.name = "The Wayfarer"
         self.level = 1
         self.experience = 0
-        self.base_stats = {"health": 40, "attack": 8, "defense": 4, "luck": 3}
+        self.base_stats = {"health": 55, "attack": 8, "defense": 4, "luck": 3}
         self.stat_points = 0
         self.inventory_capacity = 12
         self.inventory = []
@@ -209,6 +223,10 @@ class Hero:
         self.pending_routes = []
         self.pending_stage = 0
         self.training_count = 0
+        self.campaign_complete = False
+        self.ending_seen = False
+        self.endless_depth = 0
+        self.best_endless = 0
 
     @property
     def xp_needed(self):
@@ -354,7 +372,7 @@ class Hero:
             need = self.xp_needed
             self.experience -= need
             self.level += 1
-            self.base_stats["health"] += 3
+            self.base_stats["health"] += 12
             self.stat_points += 1
             levels += 1
         return levels
@@ -362,7 +380,7 @@ class Hero:
     def spend_point(self, stat):
         if self.stat_points <= 0 or stat not in self.base_stats:
             return False
-        self.base_stats[stat] += 4 if stat == "health" else 1
+        self.base_stats[stat] += 8 if stat == "health" else 1
         self.stat_points -= 1
         return True
 
@@ -408,6 +426,10 @@ class Hero:
             "pending_routes": list(self.pending_routes),
             "pending_stage": self.pending_stage,
             "training_count": self.training_count,
+            "campaign_complete": self.campaign_complete,
+            "ending_seen": self.ending_seen,
+            "endless_depth": self.endless_depth,
+            "best_endless": self.best_endless,
         }
 
     @classmethod
@@ -445,4 +467,8 @@ class Hero:
         hero.pending_routes = [str(value) for value in data.get("pending_routes", [])][:3]
         hero.pending_stage = int(data.get("pending_stage", 0))
         hero.training_count = int(data.get("training_count", 0))
+        hero.campaign_complete = bool(data.get("campaign_complete", 25 in hero.cleared_stages))
+        hero.ending_seen = bool(data.get("ending_seen", False))
+        hero.endless_depth = max(0, int(data.get("endless_depth", 0)))
+        hero.best_endless = max(hero.endless_depth, int(data.get("best_endless", 0)))
         return hero

@@ -2,6 +2,16 @@
 
 Bonebound v0.1.0 uses curated assets with licenses suitable for continued development.
 
+## Bonebound Original Pixel Assets
+
+Source: Created inside the Bonebound project
+
+License: Project-owned original work
+
+Used files: 69 item icons; the unarmored Wayfarer idle, run, attack, critical, hurt, guard, victory and defeat sheets; and the higher-resolution Dust Rat idle, run, attack and defeat sheets.
+
+The set was drawn as deterministic pixel art without generative image tools. The reproducible source is `tools/build_pixel_assets.py`.
+
 ## UI Pack - Adventure
 
 Source: https://kenney.nl/assets/ui-pack-adventure
@@ -83,3 +93,9 @@ License: Creative Commons CC0
 Used file: `dungeon_ambient_1.ogg`
 
 The original license files are stored in `assets/licenses`.
+# Enemy bestiary (CC0)
+
+- Pixel Monsters & Enemies Asset Pack by elesrech
+- Source: https://elesrech.itch.io/pixel-monsters-enemies-asset-pack
+- License: Creative Commons Zero v1.0 Universal / Public Domain
+- Used for the per-enemy animated battle sprites under `assets/characters/enemies_cc0/`.
