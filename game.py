@@ -1556,7 +1556,8 @@ class Game:
             blit_at_grip(image, right_grip, angle)
             hand_radius = max(2, round(1.65 * unit))
             pygame.draw.circle(self.screen_surface, (34, 27, 27), (round(right_grip[0]), round(right_grip[1])), hand_radius + 1)
-            pygame.draw.circle(self.screen_surface, (222, 174, 125), (round(right_grip[0]), round(right_grip[1])), hand_radius)
+            pygame.draw.circle(self.screen_surface, (74, 51, 42), (round(right_grip[0]), round(right_grip[1])), hand_radius)
+            pygame.draw.circle(self.screen_surface, (126, 83, 53), (round(right_grip[0] - unit * .4), round(right_grip[1] - unit * .4)), max(1, round(unit * .45)))
 
     def draw_enemy(self, pos, enemy, anim, clock):
         color = ELEMENT_COLORS[enemy.element]

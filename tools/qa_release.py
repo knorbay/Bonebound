@@ -47,6 +47,8 @@ SPECIAL_TRINKETS = (
     "sovereign_reliquary",
 )
 
+HERO_LAYOUTS = {"idle": 6, "run": 8, "attack": 8, "critical": 10, "hurt": 4, "guard": 5, "victory": 6, "defeat": 8}
+
 
 def pygame_to_pil(surface):
     return Image.frombytes("RGB", surface.get_size(), pygame.image.tobytes(surface, "RGB"))
@@ -248,6 +250,35 @@ def test_enemy_canvases(game):
         assert len(sizes) == 1, (enemy_id, sizes)
 
 
+def test_hero_cohesion(game):
+    for state, expected_count in HERO_LAYOUTS.items():
+        frames = game.sprites.frames.get(("hero", state), [])
+        assert len(frames) == expected_count, (state, len(frames))
+        for frame in frames:
+            assert frame.get_size() == (96, 96)
+            bounds = frame.get_bounding_rect(min_alpha=8)
+            assert bounds.width <= 94 and bounds.height <= 94, (state, bounds)
+            # The old human face/hand palette must not leak back into any pose.
+            assert all(frame.get_at((x, y))[:3] != (222, 174, 125) for y in range(96) for x in range(96))
+
+    idle = game.sprites.frames[("hero", "idle")][0]
+    mask_points = []
+    cloth_points = []
+    for y in range(96):
+        for x in range(96):
+            r, g, b, alpha = idle.get_at((x, y))
+            if alpha < 16:
+                continue
+            if r > 160 and g > 155 and b > 140 and abs(r - g) < 25 and r > b and g > b:
+                mask_points.append((x, y))
+            if g > r * 1.45 and g > b * 1.02 and 75 < g < 205:
+                cloth_points.append((x, y))
+    assert mask_points and cloth_points
+    mask_width = max(x for x, _ in mask_points) - min(x for x, _ in mask_points) + 1
+    torso_width = max(x for x, _ in cloth_points) - min(x for x, _ in cloth_points) + 1
+    assert mask_width <= torso_width * .65, (mask_width, torso_width)
+
+
 def render_animation(game, output_dir, state, frame_count, duration_ms):
     frames = []
     for index in range(frame_count):
@@ -268,6 +299,24 @@ def render_animation(game, output_dir, state, frame_count, duration_ms):
         loop=0,
         optimize=False,
     )
+
+
+def render_hero_state_catalog(game, output_dir):
+    surface = pygame.Surface((1200, 670))
+    surface.fill((8, 12, 17))
+    game.ui.text(surface, "BONEBOUND  •  WAYFARER BODY COHESION", (40, 26), COLORS["gold"], "medium")
+    chosen_frames = {"idle": 0, "run": 2, "attack": 5, "critical": 7, "hurt": 1, "guard": 3, "victory": 2, "defeat": 5}
+    for index, state in enumerate(HERO_LAYOUTS):
+        row, col = divmod(index, 4)
+        card = pygame.Rect(25 + col * 292, 72 + row * 292, 274, 268)
+        game.ui.ornamented_panel(surface, card, (15, 21, 28), (67, 119, 116), 10, 2)
+        pygame.draw.circle(surface, (32, 41, 49), (card.centerx, card.y + 118), 86, 2)
+        pygame.draw.line(surface, (91, 69, 49), (card.x + 23, card.y + 225), (card.right - 23, card.y + 225), 3)
+        frame = game.sprites.frames[("hero", state)][chosen_frames[state]]
+        enlarged = pygame.transform.scale(frame, (230, 230))
+        surface.blit(enlarged, enlarged.get_rect(midbottom=(card.centerx, card.y + 230)))
+        game.ui.text(surface, state.upper(), (card.centerx, card.bottom - 25), COLORS["text"], "small", "center")
+    pygame.image.save(surface, output_dir / "hero_body_cohesion_v9.png")
 
 
 def render_potion_catalog(game, output_dir):
@@ -489,8 +538,10 @@ def main():
     test_launch_balance()
     test_rat_animation(game)
     test_enemy_canvases(game)
+    test_hero_cohesion(game)
     render_animation(game, output_dir, "attack", 8, 82)
     render_animation(game, output_dir, "critical", 10, 70)
+    render_hero_state_catalog(game, output_dir)
     render_potion_catalog(game, output_dir)
     render_fusion_catalog(game, output_dir)
     render_entrance_animation(game, output_dir)

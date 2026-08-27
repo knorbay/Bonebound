@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - "release/**"
     tags:
       - "v*"
   workflow_dispatch:
@@ -52,7 +53,7 @@ jobs:
         with:
           name: Bonebound-v0.1.0-windows-x64
           path: Bonebound-v0.1.0-windows-x64.zip
-          archive: false
+          if-no-files-found: error
 
   linux:
     name: Linux x64
@@ -89,4 +90,4 @@ jobs:
         with:
           name: Bonebound-v0.1.0-linux-x64
           path: Bonebound-v0.1.0-linux-x64.tar.gz
-          archive: false
+          if-no-files-found: error

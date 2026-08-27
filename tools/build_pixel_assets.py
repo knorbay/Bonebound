@@ -395,6 +395,18 @@ def limb(surface, color, start, end, width):
     pygame.draw.line(surface, color, start, end, width)
 
 
+def wrapped_arm(surface, sleeve, glove, start, hand):
+    """Join the masked head to a fully clothed, non-human silhouette."""
+    elbow = (
+        round(start[0] * .54 + hand[0] * .46),
+        round(start[1] * .54 + hand[1] * .46),
+    )
+    limb(surface, sleeve, start, elbow, 4)
+    limb(surface, glove, elbow, hand, 3)
+    pygame.draw.circle(surface, (34, 27, 27), hand, 3)
+    pygame.draw.circle(surface, glove, hand, 2)
+
+
 def hero_frame(state, frame, total):
     surface = pygame.Surface((48, 48), pygame.SRCALPHA)
     x = 24
@@ -442,13 +454,14 @@ def hero_frame(state, frame, total):
         fallen = rotated.subsurface(bounds).copy()
         result.blit(fallen, fallen.get_rect(midbottom=(24 + min(6, frame), 46)))
         return result
-    skin = (222, 174, 125)
     hood = (55, 39, 40)
     hood_light = (101, 64, 51)
     tunic = (46, 125, 116)
     tunic_light = (75, 166, 141)
+    sleeve = (38, 105, 100)
     trousers = (66, 55, 54)
     leather = (116, 72, 42)
+    glove = (74, 51, 42)
     boot = (55, 39, 34)
     body_y = 25 + bob
     # The torso and head stay on a fixed skeleton. Motion comes from whole-body
@@ -473,7 +486,7 @@ def hero_frame(state, frame, total):
     limb(surface, trousers, (hip[0] + 3, hip[1]), right_foot, 4)
     pygame.draw.line(surface, boot, (left_foot[0] - 3, left_foot[1]), (left_foot[0] + 2, left_foot[1]), 3)
     pygame.draw.line(surface, boot, (right_foot[0] - 2, right_foot[1]), (right_foot[0] + 4, right_foot[1]), 3)
-    torso = [(shoulder_center - 7, body_y - 9), (shoulder_center + 6, body_y - 9), (hip[0] + 8, body_y + 8), (hip[0] - 8, body_y + 8)]
+    torso = [(shoulder_center - 8, body_y - 9), (shoulder_center + 7, body_y - 9), (hip[0] + 8, body_y + 8), (hip[0] - 8, body_y + 8)]
     pygame.draw.polygon(surface, (30, 35, 38), [(a, b + 1) for a, b in torso])
     pygame.draw.polygon(surface, tunic, torso)
     pygame.draw.line(surface, tunic_light, (shoulder_center - 5, body_y - 7), (hip[0] - 6, body_y + 5), 2)
@@ -508,12 +521,24 @@ def hero_frame(state, frame, total):
     elif state == "victory":
         right_hand = (x + 5, body_y - 15)
         left_hand = (x - 11, body_y - 4)
-    limb(surface, skin, (shoulder_center - 5, shoulder_y), left_hand, 3)
-    limb(surface, skin, (shoulder_center + 5, shoulder_y), right_hand, 3)
+    wrapped_arm(surface, sleeve, glove, (shoulder_center - 6, shoulder_y), left_hand)
+    wrapped_arm(surface, sleeve, glove, (shoulder_center + 6, shoulder_y), right_hand)
     # Equipment is intentionally not baked into the body sheet. The game draws
     # the exact equipped item over these hands, so a new sword or shield is
     # visible immediately instead of leaving the starter gear on the hero.
     neck = (shoulder_center, body_y - 10)
+    cowl_outline = [
+        (neck[0] - 8, neck[1] + 2), (neck[0] - 5, neck[1] - 3),
+        (neck[0] + 5, neck[1] - 3), (neck[0] + 8, neck[1] + 2),
+        (neck[0] + 5, neck[1] + 6), (neck[0] - 5, neck[1] + 6),
+    ]
+    pygame.draw.polygon(surface, (27, 27, 31), cowl_outline)
+    pygame.draw.polygon(surface, hood, [
+        (neck[0] - 6, neck[1] + 2), (neck[0] - 4, neck[1] - 2),
+        (neck[0] + 4, neck[1] - 2), (neck[0] + 6, neck[1] + 2),
+        (neck[0] + 4, neck[1] + 4), (neck[0] - 4, neck[1] + 4),
+    ])
+    pygame.draw.line(surface, hood_light, (neck[0] - 5, neck[1] + 2), (neck[0] + 5, neck[1] + 2), 1)
     pygame.draw.rect(surface, hood, (neck[0] - 3, neck[1] - 2, 7, 5))
     pygame.draw.line(surface, hood_light, (neck[0] - 2, neck[1] - 1), (neck[0] + 2, neck[1] - 1), 1)
     head = (shoulder_center, body_y - 15)
@@ -522,32 +547,32 @@ def hero_frame(state, frame, total):
     mask_light = (239, 233, 207)
     mask_shadow = (132, 135, 128)
     mask_eye = (77, 218, 202)
-    pygame.draw.circle(surface, outline, (head[0] - 1, head[1]), 9)
-    pygame.draw.circle(surface, hood, (head[0] - 1, head[1]), 7)
+    pygame.draw.circle(surface, outline, (head[0] - 1, head[1]), 8)
+    pygame.draw.circle(surface, hood, (head[0] - 1, head[1]), 6)
     outer_mask = [
-        (head[0] - 6, head[1] - 7), (head[0] + 4, head[1] - 7),
-        (head[0] + 8, head[1] - 3), (head[0] + 9, head[1] + 1),
-        (head[0] + 6, head[1] + 6), (head[0] + 1, head[1] + 8),
-        (head[0] - 5, head[1] + 6), (head[0] - 8, head[1] + 2),
-        (head[0] - 8, head[1] - 4),
+        (head[0] - 6, head[1] - 6), (head[0] + 3, head[1] - 6),
+        (head[0] + 7, head[1] - 3), (head[0] + 8, head[1] + 1),
+        (head[0] + 5, head[1] + 5), (head[0], head[1] + 7),
+        (head[0] - 5, head[1] + 5), (head[0] - 7, head[1] + 2),
+        (head[0] - 7, head[1] - 3),
     ]
     mask = [
-        (head[0] - 5, head[1] - 6), (head[0] + 3, head[1] - 6),
-        (head[0] + 7, head[1] - 2), (head[0] + 7, head[1] + 1),
-        (head[0] + 4, head[1] + 5), (head[0] + 1, head[1] + 7),
-        (head[0] - 4, head[1] + 5), (head[0] - 6, head[1] + 2),
-        (head[0] - 6, head[1] - 3),
+        (head[0] - 5, head[1] - 5), (head[0] + 2, head[1] - 5),
+        (head[0] + 6, head[1] - 2), (head[0] + 6, head[1] + 1),
+        (head[0] + 3, head[1] + 4), (head[0], head[1] + 6),
+        (head[0] - 4, head[1] + 4), (head[0] - 5, head[1] + 2),
+        (head[0] - 5, head[1] - 2),
     ]
     pygame.draw.polygon(surface, outline, outer_mask)
     pygame.draw.polygon(surface, mask_bone, mask)
     pygame.draw.polygon(surface, mask_shadow, [
-        (head[0] + 3, head[1] - 5), (head[0] + 7, head[1] - 2),
-        (head[0] + 7, head[1] + 1), (head[0] + 4, head[1] + 5),
-        (head[0] + 1, head[1] + 7), (head[0] + 1, head[1] + 2),
+        (head[0] + 2, head[1] - 4), (head[0] + 6, head[1] - 2),
+        (head[0] + 6, head[1] + 1), (head[0] + 3, head[1] + 4),
+        (head[0], head[1] + 6), (head[0], head[1] + 2),
     ])
-    pygame.draw.line(surface, mask_light, (head[0] - 4, head[1] - 5), (head[0] + 2, head[1] - 5), 1)
-    pygame.draw.line(surface, outline, (head[0] - 3, head[1] - 2), (head[0] + 5, head[1] - 1), 2)
-    pygame.draw.rect(surface, mask_eye, (head[0] + 1, head[1] - 2, 2, 1))
+    pygame.draw.line(surface, mask_light, (head[0] - 4, head[1] - 4), (head[0] + 1, head[1] - 4), 1)
+    pygame.draw.line(surface, outline, (head[0] - 3, head[1] - 2), (head[0] + 4, head[1] - 1), 2)
+    pygame.draw.rect(surface, mask_eye, (head[0], head[1] - 2, 2, 1))
     pygame.draw.line(surface, (78, 82, 82), (head[0] - 2, head[1] + 1), (head[0] + 1, head[1] + 4), 1)
     pygame.draw.line(surface, outline, (head[0] + 1, head[1] + 4), (head[0] + 4, head[1] + 3), 1)
     if state == "victory":
