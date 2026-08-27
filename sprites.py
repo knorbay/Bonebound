@@ -60,7 +60,7 @@ class CharacterSprites:
             for state in ("idle", "attack", "defeat"):
                 self.frames[("enemy", state)] = self.load_folder(root / "enemy" / state)
         self._load_cc0_enemies(root / "enemies_cc0")
-        self._load_arena_enemy_overrides()
+        self._enhance_narrow_humanoids()
         self._load_original_enemies(root / "enemies_original")
         self._normalize_enemy_canvases()
 
@@ -137,46 +137,27 @@ class CharacterSprites:
                 if frames:
                     self.enemy_frames[(enemy_id, state)] = frames
 
-    def _load_arena_enemy_overrides(self):
-        """Give the Crypt Slinger a complete higher-resolution silhouette."""
-        idle = self.frames.get(("enemy", "idle"), [])
-        attack = self.frames.get(("enemy", "attack"), [])
-        if not idle or not attack:
-            return
-
-        shared_bounds = pygame.Rect(0, 0, 0, 0)
-        for frame in idle + attack:
-            bounds = frame.get_bounding_rect(min_alpha=8)
-            if bounds.width and bounds.height:
-                shared_bounds = bounds if not shared_bounds.width else shared_bounds.union(bounds)
-        shared_bounds.inflate_ip(6, 6)
-        shared_bounds = shared_bounds.clip(idle[0].get_rect())
-
-        def crypt_palette(frame):
-            recolored = frame.subsurface(shared_bounds).copy()
-            for y in range(recolored.get_height()):
-                for x in range(recolored.get_width()):
-                    red, green, blue, alpha = recolored.get_at((x, y))
-                    if alpha < 8 or max(red, green, blue) - min(red, green, blue) > 24:
-                        continue
-                    light = max(red, green, blue)
-                    if light < 72:
-                        continue
-                    ratio = (light - 72) / 183
-                    recolored.set_at((x, y), (
-                        round(64 + 148 * ratio),
-                        round(82 + 144 * ratio),
-                        round(132 + 123 * ratio),
-                        alpha,
-                    ))
-            return recolored
-
-        idle_frames = [crypt_palette(frame) for frame in idle]
-        attack_frames = [crypt_palette(frame) for frame in attack]
-        self.enemy_frames[("crypt_slinger", "idle")] = idle_frames
-        self.enemy_frames[("crypt_slinger", "run")] = idle_frames
-        self.enemy_frames[("crypt_slinger", "attack")] = attack_frames
-        self.enemy_frames[("crypt_slinger", "defeat")] = idle_frames
+    def _enhance_narrow_humanoids(self):
+        """Complete the cultist silhouettes without replacing their artwork."""
+        for enemy_id in ("crypt_slinger", "void_acolyte"):
+            run_frames = self.enemy_frames.get((enemy_id, "run"), [])
+            for state in ("idle", "run", "attack", "defeat"):
+                frames = self.enemy_frames.get((enemy_id, state), [])
+                # The source pack has no separate attack sheet. Reuse its full
+                # walk cycle rather than freezing the character on one narrow
+                # pose; the battle lunge still supplies the attack direction.
+                if state == "attack" and len(frames) <= 1 and run_frames:
+                    frames = run_frames
+                enhanced = []
+                for frame in frames:
+                    detailed = pygame.transform.scale2x(frame)
+                    detailed = pygame.transform.scale(
+                        detailed,
+                        (round(detailed.get_width() * 1.22), detailed.get_height()),
+                    )
+                    enhanced.append(detailed)
+                if enhanced:
+                    self.enemy_frames[(enemy_id, state)] = enhanced
 
     def _load_original_enemies(self, root):
         """Override selected CC0 actors with higher-resolution Bonebound sheets."""

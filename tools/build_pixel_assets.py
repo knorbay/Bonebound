@@ -516,12 +516,15 @@ def hero_frame(state, frame, total):
     neck = (shoulder_center, body_y - 10)
     pygame.draw.rect(surface, skin, (neck[0] - 2, neck[1] - 2, 5, 5))
     head = (shoulder_center, body_y - 15)
-    pygame.draw.circle(surface, (34, 27, 27), (head[0], head[1] + 1), 7)
-    pygame.draw.circle(surface, skin, head, 6)
-    pygame.draw.rect(surface, hair, (head[0] - 6, head[1] - 6, 11, 4))
-    pygame.draw.rect(surface, hair, (head[0] - 6, head[1] - 3, 3, 6))
-    pygame.draw.rect(surface, hair_light, (head[0] - 3, head[1] - 5, 5, 1))
-    pygame.draw.rect(surface, (33, 31, 31), (head[0] + 3, head[1], 1, 1))
+    pygame.draw.circle(surface, (34, 27, 27), (head[0], head[1] + 1), 8)
+    pygame.draw.circle(surface, skin, head, 7)
+    pygame.draw.rect(surface, skin, (head[0] + 5, head[1], 3, 2))
+    pygame.draw.rect(surface, hair, (head[0] - 7, head[1] - 7, 13, 5))
+    pygame.draw.rect(surface, hair, (head[0] - 7, head[1] - 4, 3, 8))
+    pygame.draw.rect(surface, hair_light, (head[0] - 4, head[1] - 6, 6, 1))
+    pygame.draw.rect(surface, (112, 63, 39), (head[0] + 2, head[1] - 2, 3, 1))
+    pygame.draw.rect(surface, (33, 31, 31), (head[0] + 3, head[1], 2, 1))
+    pygame.draw.rect(surface, (135, 78, 57), (head[0] + 5, head[1] + 3, 2, 1))
     if state == "victory":
         pygame.draw.rect(surface, (240, 193, 61), (head[0] + 5, head[1] - 2, 2, 2))
     return surface
@@ -534,7 +537,7 @@ def refine_hero_frame(low, state):
     extra grid space adds finer edge lighting and material texture before the
     frame is shown. The exact 2x scale avoids uneven limb widths between poses.
     """
-    refined = pygame.transform.scale(low, (96, 96))
+    refined = pygame.transform.scale2x(low)
     source = refined.copy()
     width, height = refined.get_size()
 
@@ -612,14 +615,30 @@ def refine_hero_frame(low, state):
                 head_right = max(point[0] for point in head_points)
                 head_top = min(point[1] for point in head_points)
                 head_bottom = max(point[1] for point in head_points)
-                # Sub-pixel facial planes: temple shadow, ear, brow and eye glint.
-                pygame.draw.line(refined, (190, 126, 91), (head_right - 2, head_top + 4), (head_right - 2, head_bottom - 2), 1)
-                pygame.draw.rect(refined, (205, 145, 101), (head_right - 1, head_top + 6, 2, 3))
-                eye_x = min(head_right - 3, (head_left + head_right) // 2 + 3)
-                eye_y = head_top + max(4, (head_bottom - head_top) // 2)
-                pygame.draw.rect(refined, (24, 25, 27), (eye_x, eye_y, 2, 1))
-                pygame.draw.rect(refined, (244, 222, 181), (eye_x, eye_y, 1, 1))
-                pygame.draw.line(refined, (112, 63, 39), (head_left + 2, head_top + 1), (head_right - 3, head_top), 1)
+                face_height = head_bottom - head_top + 1
+                eye_y = head_top + max(7, round(face_height * .45))
+                eye_x = max(head_left + 7, head_right - 8)
+                # A consistent profile across every pose: stepped hairline,
+                # eyebrow, eye, ear, nose, mouth, jaw plane and cheek light.
+                pygame.draw.lines(refined, (92, 49, 34), False, [
+                    (head_left + 3, head_top + 2),
+                    (head_left + 8, head_top + 1),
+                    (head_right - 5, head_top + 3),
+                ], 2)
+                pygame.draw.line(refined, (146, 86, 49), (head_left + 7, head_top + 3), (head_right - 7, head_top + 4), 1)
+                pygame.draw.rect(refined, (112, 63, 39), (eye_x - 1, eye_y - 3, 5, 1))
+                pygame.draw.rect(refined, (24, 25, 27), (eye_x, eye_y - 1, 3, 2))
+                pygame.draw.rect(refined, (244, 222, 181), (eye_x + 1, eye_y - 1, 1, 1))
+                ear_x = head_left + 4
+                pygame.draw.rect(refined, (187, 119, 86), (ear_x, eye_y, 3, 4))
+                pygame.draw.rect(refined, (226, 166, 116), (ear_x + 1, eye_y + 1, 1, 2))
+                nose_x = head_right - 3
+                pygame.draw.line(refined, (190, 126, 91), (nose_x, eye_y), (nose_x + 1, eye_y + 4), 2)
+                pygame.draw.rect(refined, (237, 188, 137), (nose_x + 1, eye_y + 3, 2, 2))
+                mouth_y = min(head_bottom - 3, eye_y + 7)
+                pygame.draw.line(refined, (117, 65, 54), (head_right - 7, mouth_y), (head_right - 3, mouth_y), 1)
+                pygame.draw.line(refined, (178, 111, 80), (head_left + 8, head_bottom - 3), (head_right - 6, head_bottom - 1), 1)
+                pygame.draw.rect(refined, (241, 192, 141), (eye_x - 2, eye_y + 3, 2, 2))
 
         if trouser_points:
             leg_top = min(point[1] for point in trouser_points)
