@@ -1,4 +1,4 @@
-name: Nuitka Builds
+name: Nuitka macOS Build
 
 on:
   push:
@@ -16,42 +16,102 @@ jobs:
   macos:
     name: macOS
     runs-on: macos-latest
-  
+
     steps:
-      - uses: actions/checkout@v6
-  
-      - uses: actions/setup-python@v6
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
-  
+
       - name: Install dependencies
-        run: python -m pip install -r requirements-build.txt
-  
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
       - name: Validate source
         run: |
           SDL_VIDEODRIVER=dummy \
           SDL_AUDIODRIVER=dummy \
           python main.py --simulate
-  
-      - name: Compile with Nuitka
-        run: >-
-          python -m nuitka
-          --mode=app
-          --assume-yes-for-downloads
-          --output-filename=Bonebound
-          --output-dir=build/macos
-          --include-data-dir=assets=assets
-          --remove-output
-          main.py
-  
-      - name: Package macOS build
+
+      - name: Compile macOS app with Nuitka
         run: |
-          ditto -c -k --sequesterRsrc --keepParent \
+          python -m nuitka \
+            --mode=app \
+            --assume-yes-for-downloads \
+            --output-dir=build/macos \
+            --include-data-dir=assets=assets \
+            --remove-output \
+            main.py
+
+      - name: Show Nuitka output
+        run: |
+          echo "=== Nuitka build output ==="
+          find build/macos -maxdepth 4 -print
+
+      - name: Find and rename app
+        run: |
+          APP_PATH="$(find build/macos -maxdepth 2 -type d -name '*.app' | head -n 1)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Nuitka did not produce a .app bundle."
+            echo "Contents of build/macos:"
+            find build/macos -maxdepth 5 -print
+            exit 1
+          fi
+
+          echo "Found app bundle: $APP_PATH"
+
+          if [ "$APP_PATH" != "build/macos/Bonebound.app" ]; then
+            rm -rf build/macos/Bonebound.app
+            mv "$APP_PATH" build/macos/Bonebound.app
+          fi
+
+          echo "Final app:"
+          ls -la build/macos
+          ls -la build/macos/Bonebound.app
+
+      - name: Validate app executable
+        run: |
+          echo "=== Bonebound.app contents ==="
+          find build/macos/Bonebound.app -maxdepth 3 -print
+
+          EXECUTABLE="$(find build/macos/Bonebound.app/Contents/MacOS -type f -perm +111 | head -n 1)"
+
+          if [ -z "$EXECUTABLE" ]; then
+            echo "ERROR: No executable found inside Bonebound.app"
+            exit 1
+          fi
+
+          echo "Executable: $EXECUTABLE"
+
+          SDL_VIDEODRIVER=dummy \
+          SDL_AUDIODRIVER=dummy \
+          "$EXECUTABLE" --simulate
+
+      - name: Package macOS app
+        run: |
+          ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
             build/macos/Bonebound.app \
             Bonebound-v0.1.0-macos.zip
-  
-      - uses: actions/upload-artifact@v7
+
+      - name: Verify package
+        run: |
+          echo "=== ZIP contents ==="
+          unzip -l Bonebound-v0.1.0-macos.zip | head -100
+
+          test -f Bonebound-v0.1.0-macos.zip
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v7
         with:
           name: Bonebound-v0.1.0-macos
           path: Bonebound-v0.1.0-macos.zip
