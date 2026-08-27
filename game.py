@@ -1607,6 +1607,13 @@ class Game:
         max_width = 460 if enemy.boss else 420
         sprite = self.sprites.frame("enemy", anim, elapsed, height, enemy.enemy_id, max_width)
         if sprite:
+            # Several source actors use near-black cloaks and armor. Against the
+            # dungeon backdrop those pixels looked transparent, even though the
+            # sprite was fully inside the battle frame. Lift the palette very
+            # slightly and add a crisp elemental rim at render time.
+            sprite = sprite.copy()
+            palette_lift = tuple(12 + round(channel * .055) for channel in color)
+            sprite.fill((*palette_lift, 0), special_flags=pygame.BLEND_RGB_ADD)
             death_progress = min(1.0, elapsed / .88) if dying else 0.0
             death_flash = max(0.0, 1.0 - abs(death_progress - .16) / .16) if dying else 0.0
             fade = max(0.0, 1.0 - max(0.0, death_progress - .22) / .78) if dying else 1.0
@@ -1630,7 +1637,7 @@ class Game:
             render_y = y - (74 if enemy.enemy_id in flyers else 0)
             rect = sprite.get_rect(midbottom=(round(x), round(render_y + 18)))
             if self.battle and self.battle.phase != "approach":
-                safe_frame = pygame.Rect(500, 198, 665, 414)
+                safe_frame = pygame.Rect(504, 202, 657, 406)
                 fit = min(1.0, safe_frame.width / max(1, rect.width), safe_frame.height / max(1, rect.height))
                 if fit < 1.0:
                     sprite = pygame.transform.scale(sprite, (max(1, round(sprite.get_width() * fit)), max(1, round(sprite.get_height() * fit))))
@@ -1652,6 +1659,21 @@ class Game:
                     ring = pygame.Surface((sprite.get_width() + 70, 42), pygame.SRCALPHA)
                     pygame.draw.ellipse(ring, (*color, round(80 + 90 * charge)), ring.get_rect().inflate(-8, -12), max(2, round(2 + charge * 3)))
                     self.screen_surface.blit(ring, (rect.centerx - ring.get_width() / 2, y - 8))
+            enemy_mask = pygame.mask.from_surface(sprite, 8)
+            rim_color = self.ui.blend(color, COLORS["text"], .34)
+            rim = pygame.Surface(sprite.get_size(), pygame.SRCALPHA)
+            enemy_mask.to_surface(
+                rim,
+                setcolor=(*rim_color, round((132 if enemy.boss else 112) * fade)),
+                unsetcolor=(0, 0, 0, 0),
+            )
+            rim_width = max(2, min(4, round(sprite.get_height() / 105)))
+            for offset_x, offset_y in (
+                (-rim_width, 0), (rim_width, 0), (0, -rim_width), (0, rim_width),
+                (-rim_width, -rim_width), (rim_width, -rim_width),
+                (-rim_width, rim_width), (rim_width, rim_width),
+            ):
+                self.screen_surface.blit(rim, rect.move(offset_x, offset_y))
             if dying:
                 body = sprite.copy()
                 body.set_alpha(round(255 * fade))
