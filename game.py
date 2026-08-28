@@ -23,6 +23,33 @@ FPS = 60
 VERSION = "0.1.0"
 
 
+def fitted_viewport(window_size):
+    """Return a centered 5:4 viewport that fits the logical game canvas."""
+    window_width, window_height = window_size
+    if window_width <= 0 or window_height <= 0:
+        return pygame.Rect(0, 0, WIDTH, HEIGHT)
+    scale = min(window_width / WIDTH, window_height / HEIGHT)
+    target_width = max(1, round(WIDTH * scale))
+    target_height = max(1, round(HEIGHT * scale))
+    return pygame.Rect(
+        (window_width - target_width) // 2,
+        (window_height - target_height) // 2,
+        target_width,
+        target_height,
+    )
+
+
+def logical_pointer(position, viewport):
+    """Translate a window pointer into the fixed 1200x960 UI coordinate space."""
+    if not viewport.collidepoint(position):
+        return (-10_000, -10_000)
+    # Map pixel centres so both the first and final displayed pixels reach the
+    # corresponding edges of the logical canvas at every scale.
+    x = round(((position[0] - viewport.x) + .5) * WIDTH / viewport.width - .5)
+    y = round(((position[1] - viewport.y) + .5) * HEIGHT / viewport.height - .5)
+    return (min(WIDTH - 1, max(0, x)), min(HEIGHT - 1, max(0, y)))
+
+
 class Screen(Enum):
     MAIN_MENU = "main_menu"
     HUB = "hub"
@@ -92,13 +119,15 @@ class Game:
             os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
         pygame.init()
         self.simulate = simulate
-        flags = pygame.HIDDEN if simulate else 0
+        flags = pygame.HIDDEN if simulate else pygame.RESIZABLE
         try:
             app_icon = pygame.image.load(Path(__file__).resolve().parent / "assets" / "ui" / "bonebound_app_icon.png")
             pygame.display.set_icon(app_icon)
         except (FileNotFoundError, OSError, pygame.error):
             pass
-        self.screen_surface = pygame.display.set_mode((WIDTH, HEIGHT), flags)
+        self.display_surface = pygame.display.set_mode((WIDTH, HEIGHT), flags)
+        self.screen_surface = pygame.Surface((WIDTH, HEIGHT))
+        self.viewport = fitted_viewport(self.display_surface.get_size())
         pygame.display.set_caption(f"BONEBOUND • Descent v{VERSION}")
         self.clock = pygame.time.Clock()
         self.audio = Audio(not simulate)
@@ -147,6 +176,31 @@ class Game:
         self.enemy_hit_flash = 0.0
         self.actor_anim_key = {"hero": None, "enemy": None}
         self.actor_anim_started = {"hero": 0.0, "enemy": 0.0}
+
+    def update_viewport(self):
+        current_display = pygame.display.get_surface()
+        if current_display is not None:
+            self.display_surface = current_display
+        self.viewport = fitted_viewport(self.display_surface.get_size())
+
+    def pointer_position(self, position):
+        self.update_viewport()
+        return logical_pointer(position, self.viewport)
+
+    def present(self):
+        """Scale the logical canvas into the resizable window without stretching it."""
+        self.update_viewport()
+        if self.simulate:
+            self.display_surface.blit(self.screen_surface, (0, 0))
+        else:
+            self.display_surface.fill((3, 6, 10))
+            if self.viewport.size == (WIDTH, HEIGHT):
+                frame = self.screen_surface
+            else:
+                # Nearest-neighbour scaling keeps the pixel-art silhouettes crisp.
+                frame = pygame.transform.scale(self.screen_surface, self.viewport.size)
+            self.display_surface.blit(frame, self.viewport.topleft)
+        pygame.display.flip()
 
     def toast(self, text):
         self.toast_text = text
@@ -567,16 +621,21 @@ class Game:
 
     def handle_events(self):
         self.clicked = False
+        self.update_viewport()
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
+            elif event.type in {pygame.VIDEORESIZE, pygame.WINDOWRESIZED}:
+                self.update_viewport()
+                self.mouse = self.pointer_position(pygame.mouse.get_pos())
             elif self.transition_target is not None:
                 if event.type == pygame.MOUSEMOTION:
-                    self.mouse = event.pos
+                    self.mouse = self.pointer_position(event.pos)
                 continue
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                self.mouse = event.pos
-                source = next((zone for zone in reversed(self.item_drag_zones) if zone.get("item") and zone["rect"].collidepoint(event.pos) and zone["role"] in {"inventory", "equipment"}), None)
+                position = self.pointer_position(event.pos)
+                self.mouse = position
+                source = next((zone for zone in reversed(self.item_drag_zones) if zone.get("item") and zone["rect"].collidepoint(position) and zone["role"] in {"inventory", "equipment"}), None)
                 if source:
                     self.drag_candidate = {
                         "uid": source["item"].uid,
@@ -584,20 +643,22 @@ class Game:
                         "slot": source.get("slot"),
                         "index": source.get("index"),
                     }
-                    self.drag_start = event.pos
+                    self.drag_start = position
                     self.drag_active = False
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                self.mouse = event.pos
+                position = self.pointer_position(event.pos)
+                self.mouse = position
                 if self.drag_active:
-                    self.finish_item_drag(event.pos)
+                    self.finish_item_drag(position)
                     self.clicked = False
                 else:
                     self.clicked = True
                 self.drag_candidate = None
                 self.drag_active = False
             elif event.type == pygame.MOUSEMOTION:
-                self.mouse = event.pos
-                if self.drag_candidate and pygame.Vector2(event.pos).distance_to(self.drag_start) >= 7:
+                position = self.pointer_position(event.pos)
+                self.mouse = position
+                if self.drag_candidate and pygame.Vector2(position).distance_to(self.drag_start) >= 7:
                     self.drag_active = True
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if self.confirm_new:
@@ -2222,7 +2283,7 @@ class Game:
         self.draw_item_drag_overlay()
         self.ui.toast(self.screen_surface, self.toast_text, self.toast_age)
         self.draw_transition()
-        pygame.display.flip()
+        self.present()
         self.clicked = False
 
     def run_simulation(self):

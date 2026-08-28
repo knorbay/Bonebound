@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 from combat import CombatEngine
 from content import ENEMIES, ITEM_TEMPLATES, STAGES, create_item, recipe_result, starter_loadout
-from game import Game, Screen
+from game import Game, Screen, fitted_viewport, logical_pointer
 from models import Hero, ItemKind
 from systems import Mixer, SaveManager
 from ui import COLORS
@@ -54,6 +54,18 @@ NEW_GEAR = (
 )
 
 HERO_LAYOUTS = {"idle": 8, "run": 10, "attack": 6, "critical": 7, "hurt": 3, "guard": 5, "victory": 8, "defeat": 10}
+
+
+def test_resizable_window_mapping():
+    landscape = fitted_viewport((1600, 900))
+    assert landscape == pygame.Rect(237, 0, 1125, 900), landscape
+    assert logical_pointer(landscape.center, landscape) == (600, 480)
+    assert logical_pointer((0, 0), landscape) == (-10_000, -10_000)
+
+    portrait = fitted_viewport((800, 1000))
+    assert portrait == pygame.Rect(0, 180, 800, 640), portrait
+    assert logical_pointer((0, 180), portrait) == (0, 0)
+    assert logical_pointer((799, 819), portrait) == (1199, 959)
 
 
 def pygame_to_pil(surface):
@@ -789,6 +801,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     pygame.init()
     game = Game(True)
+    test_resizable_window_mapping()
     test_drag_drop(game)
     test_potions()
     test_universal_fusions()
