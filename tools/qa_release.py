@@ -394,6 +394,7 @@ def test_hero_cohesion(game):
     idle = game.sprites.frames[("hero", "idle")][0]
     mask_points = []
     cloth_points = []
+    grave_light_points = []
     for y in range(96):
         for x in range(96):
             r, g, b, alpha = idle.get_at((x, y))
@@ -403,10 +404,15 @@ def test_hero_cohesion(game):
                 mask_points.append((x, y))
             if g > r * 1.45 and g > b * 1.02 and 75 < g < 205:
                 cloth_points.append((x, y))
+            if g > 205 and 60 < r < 105 and 135 < b < 190:
+                grave_light_points.append((x, y))
     assert mask_points and cloth_points
     mask_width = max(x for x, _ in mask_points) - min(x for x, _ in mask_points) + 1
     torso_width = max(x for x, _ in cloth_points) - min(x for x, _ in cloth_points) + 1
     assert mask_width <= torso_width * .65, (mask_width, torso_width)
+    assert grave_light_points
+    mask_center_x = (min(x for x, _ in mask_points) + max(x for x, _ in mask_points)) / 2
+    assert max(x for x, _ in grave_light_points) > mask_center_x, (grave_light_points, mask_center_x)
 
 
 def render_animation(game, output_dir, state, frame_count, duration_ms):

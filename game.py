@@ -93,6 +93,11 @@ class Game:
         pygame.init()
         self.simulate = simulate
         flags = pygame.HIDDEN if simulate else 0
+        try:
+            app_icon = pygame.image.load(Path(__file__).resolve().parent / "assets" / "ui" / "bonebound_app_icon.png")
+            pygame.display.set_icon(app_icon)
+        except (FileNotFoundError, OSError, pygame.error):
+            pass
         self.screen_surface = pygame.display.set_mode((WIDTH, HEIGHT), flags)
         pygame.display.set_caption(f"BONEBOUND • Descent v{VERSION}")
         self.clock = pygame.time.Clock()
@@ -1502,11 +1507,11 @@ class Game:
             shield_point = metadata["shield_center"]
             angle = metadata["weapon_angle"]
         else:
-            right_hand, shield_point = (70, 51), (34, 53)
-            angle = -38
+            right_hand, shield_point = (26, 51), (62, 53)
+            angle = -142
 
         right_grip = (hero_rect.x + right_hand[0] * unit, hero_rect.y + right_hand[1] * unit)
-        shoulder = pygame.Vector2(hero_rect.x + 58 * unit, hero_rect.y + 48 * unit)
+        shoulder = pygame.Vector2(hero_rect.x + 38 * unit, hero_rect.y + 48 * unit)
         grip_vector = pygame.Vector2(right_grip) - shoulder
         if grip_vector.length_squared() > 1:
             bend = pygame.Vector2(-grip_vector.y, grip_vector.x).normalize() * 2.4 * unit
@@ -1515,10 +1520,10 @@ class Game:
         right_elbow = shoulder.lerp(pygame.Vector2(right_grip), .52) + bend
 
         # The source shield layer crosses the body in several sword poses.
-        # Keep the carried shield on the off-hand side and slightly below the
+        # Keep the carried shield on the forward off-hand side and slightly below the
         # mask, while still retaining its frame-by-frame vertical movement.
         shield_x, shield_y = shield_point
-        shield_x = min(shield_x, 49 if pose == "guard" else 47)
+        shield_x = max(shield_x, 50 if pose == "guard" else 52)
         shield_y = max(shield_y, 52) + (4.0 if pose == "guard" else 4.5)
         impact = min(1.0, self.hero_block_flash / .34) if self.hero_block_flash > 0 else 0.0
         shield_center = (

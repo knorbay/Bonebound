@@ -1085,7 +1085,9 @@ def _recolor_mystic_wayfarer(frame):
         left_eye_x = left + max(1, (right - left) // 4)
         pygame.draw.rect(frame, (28, 27, 29), (left_eye_x - 1, eye_y, 2, 2))
         pygame.draw.rect(frame, (28, 27, 29), (eye_x - 1, eye_y, 3, 2))
-        pygame.draw.rect(frame, (82, 224, 164), (eye_x, eye_y, 1, 1))
+        # The source already faces right. Keep the grave-light on the forward
+        # eye so the mask reads toward the enemy instead of over its shoulder.
+        pygame.draw.rect(frame, (82, 224, 164), (min(right, eye_x + 1), eye_y, 1, 1))
         rune_x = (left + right) // 2
         pygame.draw.line(frame, (63, 167, 126), (rune_x, top + 1), (rune_x, max(top + 1, eye_y - 1)), 1)
         if bottom - top > 5:
@@ -1167,7 +1169,7 @@ def build_hero():
                 frame.blit(_source_cell(layers[layer_index], source_index), (0, 0))
             frame = _remove_source_weapon(frame, layers[2], source_index)
             frame = _recolor_mystic_wayfarer(frame)
-            state_frames.append(pygame.transform.flip(frame, True, False))
+            state_frames.append(frame)
         raw_frames[state] = state_frames
 
     bounds = [frame.get_bounding_rect(min_alpha=8) for frames in raw_frames.values() for frame in frames]
@@ -1189,16 +1191,16 @@ def build_hero():
             sheet.blit(scaled, (frame_number * 96 + round(offset_x), round(offset_y)))
 
             source_grip, source_tip = _weapon_source_pose(layers[2], source_index)
-            # The game faces right, so mirror source points exactly like art.
-            grip = pygame.Vector2(99 - source_grip.x, source_grip.y)
-            tip = pygame.Vector2(99 - source_tip.x, source_tip.y)
+            # Sven's source already faces the right-side enemy; keep equipment
+            # points in the same coordinate system as the unmirrored body.
+            grip = pygame.Vector2(source_grip)
+            tip = pygame.Vector2(source_tip)
             blade = tip - grip
             if blade.length_squared() < 1:
                 blade = pygame.Vector2(10, -10)
             blade = blade.normalize()
             elbow = grip - blade * 8
             shield_center = _shield_source_center(layers[3], source_index)
-            shield_center.x = 99 - shield_center.x
 
             def project(point):
                 return [round(point.x * scale + offset_x, 2), round(point.y * scale + offset_y, 2)]
