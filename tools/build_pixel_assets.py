@@ -516,7 +516,13 @@ WEAPON_SOURCE_MAP = {
 
 def tint_external_icon(source, palette, kind):
     """Bring public-domain item silhouettes into Bonebound's material palette."""
-    icon = pygame.image.load(source)
+    loaded = pygame.image.load(source)
+    # The 7Soul sheets use indexed PNG color-key transparency. Reading their
+    # pixels directly reports that key as opaque, so the tint pass used to
+    # repaint the entire 32x32 backdrop. Blitting first converts both color-key
+    # and ordinary alpha into one real per-pixel alpha surface.
+    icon = pygame.Surface(loaded.get_size(), pygame.SRCALPHA)
+    icon.blit(loaded, (0, 0))
     if icon.get_size() != (32, 32):
         icon = pygame.transform.scale(icon, (32, 32))
     icon = icon.copy()

@@ -415,6 +415,21 @@ def test_hero_cohesion(game):
     assert max(x for x, _ in grave_light_points) > mask_center_x, (grave_light_points, mask_center_x)
 
 
+def test_item_alpha():
+    from content import ITEM_TEMPLATES
+
+    item_root = ROOT / "assets" / "items"
+    for template_id, template in ITEM_TEMPLATES.items():
+        if template["kind"].value not in {"weapon", "shield", "ring", "potion"}:
+            continue
+        image = pygame.image.load(item_root / f"{template_id}.png")
+        width, height = image.get_size()
+        corners = ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1))
+        assert all(image.get_at(point).a < 16 for point in corners), (template_id, "opaque item backdrop")
+        transparent = sum(image.get_at((x, y)).a < 16 for y in range(height) for x in range(width))
+        assert transparent >= width * height * .12, (template_id, transparent, width * height)
+
+
 def render_animation(game, output_dir, state, frame_count, duration_ms):
     frames = []
     for index in range(frame_count):
@@ -773,6 +788,7 @@ def main():
     test_rat_animation(game)
     test_enemy_canvases(game)
     test_hero_cohesion(game)
+    test_item_alpha()
     render_animation(game, output_dir, "attack", 8, 82)
     render_animation(game, output_dir, "critical", 10, 70)
     render_hero_state_catalog(game, output_dir)
