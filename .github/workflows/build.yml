@@ -44,6 +44,7 @@ jobs:
             --mode=app \
             --assume-yes-for-downloads \
             --output-dir=build/macos \
+            --macos-app-icon=assets/ui/Bonebound.icns \
             --include-data-dir=assets=assets \
             --remove-output \
             main.py
