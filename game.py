@@ -1499,29 +1499,45 @@ class Game:
         metadata = self.sprites.hero_equipment_pose(pose, elapsed)
         if metadata:
             right_hand = metadata["weapon_grip"]
-            right_elbow = metadata["weapon_elbow"]
             shield_point = metadata["shield_center"]
             angle = metadata["weapon_angle"]
         else:
-            right_hand, right_elbow, shield_point = (70, 51), (57, 45), (34, 53)
+            right_hand, shield_point = (70, 51), (34, 53)
             angle = -38
 
         right_grip = (hero_rect.x + right_hand[0] * unit, hero_rect.y + right_hand[1] * unit)
-        right_elbow = (hero_rect.x + right_elbow[0] * unit, hero_rect.y + right_elbow[1] * unit)
-        shield_center = (hero_rect.x + shield_point[0] * unit, hero_rect.y + shield_point[1] * unit)
+        shoulder = pygame.Vector2(hero_rect.x + 58 * unit, hero_rect.y + 48 * unit)
+        grip_vector = pygame.Vector2(right_grip) - shoulder
+        if grip_vector.length_squared() > 1:
+            bend = pygame.Vector2(-grip_vector.y, grip_vector.x).normalize() * 2.4 * unit
+        else:
+            bend = pygame.Vector2()
+        right_elbow = shoulder.lerp(pygame.Vector2(right_grip), .52) + bend
+
+        # The source shield layer crosses the body in several sword poses.
+        # Keep the carried shield on the off-hand side and slightly below the
+        # mask, while still retaining its frame-by-frame vertical movement.
+        shield_x, shield_y = shield_point
+        shield_x = min(shield_x, 49 if pose == "guard" else 47)
+        shield_y = max(shield_y, 52) + (4.0 if pose == "guard" else 4.5)
+        impact = min(1.0, self.hero_block_flash / .34) if self.hero_block_flash > 0 else 0.0
+        shield_center = (
+            hero_rect.x + (shield_x - 2.8 * impact) * unit,
+            hero_rect.y + (shield_y + 1.2 * impact) * unit,
+        )
 
         # The licensed source keeps equipment on separate layers. Rebuild the
         # forward forearm here so it follows the original sword arc while the
         # exact inventory icon remains visible instead of a baked-in weapon.
         if weapon:
-            pygame.draw.line(
-                self.screen_surface, (29, 27, 29), right_elbow, right_grip,
-                max(3, round(4.2 * unit)),
+            arm_segments = (
+                (shoulder, right_elbow, (32, 76, 71)),
+                (right_elbow, pygame.Vector2(right_grip), (91, 62, 43)),
             )
-            pygame.draw.line(
-                self.screen_surface, (105, 70, 43), right_elbow, right_grip,
-                max(2, round(2.5 * unit)),
-            )
+            for start, end, inner_color in arm_segments:
+                pygame.draw.line(self.screen_surface, (24, 25, 27), start, end, max(3, round(4.0 * unit)))
+                pygame.draw.line(self.screen_surface, inner_color, start, end, max(2, round(2.15 * unit)))
+            pygame.draw.circle(self.screen_surface, (43, 34, 31), (round(right_elbow.x), round(right_elbow.y)), max(2, round(2.2 * unit)))
 
         def blit_at_grip(image, grip, rotation):
             pivot = pygame.Vector2(image.get_width() * .10, image.get_height() * .89)
@@ -1531,12 +1547,35 @@ class Game:
             self.screen_surface.blit(rotated, rotated.get_rect(center=(round(rotated_center.x), round(rotated_center.y))))
 
         if shield:
-            side = max(24, round((19 if pose == "guard" else 17) * unit))
+            side = max(24, round((17 if pose == "guard" else 15) * unit))
             image = self.ui.item_sprite(shield, side, crop=True)
             if image:
-                shield_angle = -8 if pose == "guard" else math.sin(elapsed * 5.2) * 2
+                shield_color = self.ui.item_color(shield)
+                shield_angle = (-10 - 3 * impact) if pose == "guard" else math.sin(elapsed * 5.2) * 1.6
                 rotated = pygame.transform.rotate(image, shield_angle)
-                self.screen_surface.blit(rotated, rotated.get_rect(center=(round(shield_center[0]), round(shield_center[1]))))
+                shield_rect = rotated.get_rect(center=(round(shield_center[0]), round(shield_center[1])))
+
+                # A hard one-pixel-style silhouette gives every shield shape
+                # thickness, with a restrained ward pulse on an actual block.
+                mask = pygame.mask.from_surface(rotated)
+                outline = mask.to_surface(setcolor=(9, 12, 16, 220), unsetcolor=(0, 0, 0, 0))
+                edge = max(1, round(unit * .7))
+                for offset in ((-edge, 0), (edge, 0), (0, -edge), (0, edge), (edge, edge)):
+                    self.screen_surface.blit(outline, shield_rect.move(*offset))
+                if pose == "guard" or impact:
+                    ward = pygame.Surface((side * 2, side * 2), pygame.SRCALPHA)
+                    ward_center = ward.get_rect().center
+                    pulse = .5 + .5 * math.sin(self.time * 20)
+                    radius = round(side * (.57 + .05 * pulse + .09 * impact))
+                    alpha = round(52 + 72 * impact)
+                    pygame.draw.circle(ward, (*self.ui.blend(shield_color, (128, 211, 238), .48), alpha), ward_center, radius, max(2, round(unit)))
+                    for rune_index in range(3):
+                        rune_angle = -1.05 + rune_index * 1.05
+                        start = pygame.Vector2(ward_center) + pygame.Vector2(math.cos(rune_angle), math.sin(rune_angle)) * (radius - 4 * unit)
+                        end = pygame.Vector2(ward_center) + pygame.Vector2(math.cos(rune_angle), math.sin(rune_angle)) * (radius + 1 * unit)
+                        pygame.draw.line(ward, (*shield_color, min(220, alpha + 70)), start, end, max(1, round(unit * .8)))
+                    self.screen_surface.blit(ward, ward.get_rect(center=(round(shield_center[0]), round(shield_center[1]))))
+                self.screen_surface.blit(rotated, shield_rect)
                 # The fist and leather brace sit over the shield, making it
                 # visually held instead of floating beside the character.
                 left_grip = (shield_center[0] + 1.5 * unit, shield_center[1] - .5 * unit)
@@ -1551,11 +1590,26 @@ class Game:
                                  (left_grip[0] - unit, left_grip[1] - unit),
                                  (left_grip[0] + unit, left_grip[1]),
                                  max(1, round(unit * .55)))
+                if impact:
+                    spark_color = self.ui.blend(shield_color, (197, 235, 255), .72)
+                    rim = pygame.Vector2(shield_center) + pygame.Vector2(side * .48, -side * .08)
+                    for spark_index, direction in enumerate(((-.2, -1), (.8, -.7), (1, .15), (.45, .85))):
+                        length = (3.5 + spark_index % 2 * 2) * unit * impact
+                        end = rim + pygame.Vector2(direction).normalize() * length
+                        pygame.draw.line(self.screen_surface, spark_color, rim, end, max(1, round(unit)))
         if weapon:
             side = max(31, round(30 * unit))
             image = self.ui.item_sprite(weapon, side, crop=True)
             if not image:
                 return
+            if pose in {"attack", "critical"}:
+                trail_color = ELEMENT_COLORS[weapon.element] if weapon.element != Element.NEUTRAL else (232, 190, 91)
+                offsets = (-16, -31) if pose == "critical" else (-19,)
+                for trail_index, angle_offset in enumerate(reversed(offsets)):
+                    ghost = image.copy()
+                    ghost.fill((*trail_color, 0), special_flags=pygame.BLEND_RGBA_ADD)
+                    ghost.set_alpha(34 + trail_index * 18)
+                    blit_at_grip(ghost, right_grip, angle + angle_offset)
             blit_at_grip(image, right_grip, angle)
             hand_radius = max(2, round(1.65 * unit))
             pygame.draw.circle(self.screen_surface, (34, 27, 27), (round(right_grip[0]), round(right_grip[1])), hand_radius + 1)

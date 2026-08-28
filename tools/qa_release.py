@@ -677,6 +677,9 @@ def render_rat_and_shield(game, output_dir):
     game.battle.rng = random.Random(77)
     game.battle._enemy_strike()
     game.process_battle_events()
+    # Force the short shield ward window for a deterministic visual review;
+    # combat probability itself is covered separately by simulation checks.
+    game.hero_block_flash = .34
     game.draw_battle()
     pygame.image.save(game.screen_surface, output_dir / "shield_defense_impact_v8.png")
 

@@ -1034,24 +1034,64 @@ def _recolor_mystic_wayfarer(frame):
                 brightness = r + g + b
                 replacement = (143, 132, 111) if brightness < 430 else (222, 215, 185)
                 bone_colors.append((x, y))
+            elif y < 27 and r > 48 and r > g * 1.08 and g > b * 1.03:
+                # Replace Sven's exposed brown hair with the charcoal hood of
+                # the Wayfarer. Copper highlights remain on the scarf/armour.
+                brightness = r + g + b
+                replacement = (25, 29, 31) if brightness < 205 else (39, 51, 49)
             if replacement:
                 frame.set_at((x, y), (*replacement, color.a))
 
-    # A carved brow, independent eye socket and green grave-light make the
-    # face unmistakably non-human even at the native source resolution.
+    # Work only on the largest connected bone patch so raised hands cannot
+    # distort the face bounds in attack and victory poses.
     if bone_colors:
-        left = min(x for x, _ in bone_colors)
-        right = max(x for x, _ in bone_colors)
-        top = min(y for _, y in bone_colors)
-        bottom = max(y for _, y in bone_colors)
+        remaining = set(bone_colors)
+        components = []
+        while remaining:
+            stack = [remaining.pop()]
+            component = []
+            while stack:
+                point = stack.pop()
+                component.append(point)
+                px, py = point
+                for neighbor in ((px - 1, py), (px + 1, py), (px, py - 1), (px, py + 1)):
+                    if neighbor in remaining:
+                        remaining.remove(neighbor)
+                        stack.append(neighbor)
+            components.append(component)
+        face = max(components, key=lambda points: (len(points), -min(y for _, y in points)))
+        face_set = set(face)
+        left = min(x for x, _ in face)
+        right = max(x for x, _ in face)
+        top = min(y for _, y in face)
+        bottom = max(y for _, y in face)
+
+        # A one-pixel charcoal border gives the pale mask a readable silhouette
+        # without increasing the source resolution or smearing its hard pixels.
+        border = set()
+        for px, py in face:
+            for neighbor in ((px - 1, py), (px + 1, py), (px, py - 1), (px, py + 1)):
+                nx, ny = neighbor
+                if (neighbor not in face_set and 0 <= nx < frame.get_width() and 0 <= ny < frame.get_height()
+                        and frame.get_at(neighbor).a >= 16):
+                    border.add(neighbor)
+        for point in border:
+            frame.set_at(point, (24, 27, 29, frame.get_at(point).a))
+
+        # A carved brow, independent eye socket, jaw slit and green grave-light
+        # make the face unmistakably non-human at native resolution.
         eye_x = right - max(1, (right - left) // 4)
         eye_y = top + max(2, (bottom - top) // 2)
+        left_eye_x = left + max(1, (right - left) // 4)
+        pygame.draw.rect(frame, (28, 27, 29), (left_eye_x - 1, eye_y, 2, 2))
         pygame.draw.rect(frame, (28, 27, 29), (eye_x - 1, eye_y, 3, 2))
         pygame.draw.rect(frame, (82, 224, 164), (eye_x, eye_y, 1, 1))
         rune_x = (left + right) // 2
         pygame.draw.line(frame, (63, 167, 126), (rune_x, top + 1), (rune_x, max(top + 1, eye_y - 1)), 1)
         if bottom - top > 5:
-            pygame.draw.line(frame, (91, 64, 51), (left + 1, eye_y + 2), (rune_x, bottom), 1)
+            jaw_y = max(eye_y + 2, bottom - 1)
+            pygame.draw.line(frame, (68, 61, 54), (left + 1, jaw_y), (right - 1, jaw_y), 1)
+            pygame.draw.line(frame, (63, 167, 126), (rune_x, eye_y + 2), (rune_x, bottom), 1)
     return frame
 
 
