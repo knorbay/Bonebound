@@ -1,4 +1,4 @@
-name: Nuitka macOS Build
+name: Nuitka Multi-Platform Builds
 
 on:
   push:
@@ -119,4 +119,144 @@ jobs:
         with:
           name: Bonebound-v0.1.0-macos
           path: Bonebound-v0.1.0-macos.zip
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Validate source
+        shell: pwsh
+        run: |
+          $env:SDL_VIDEODRIVER = "dummy"
+          $env:SDL_AUDIODRIVER = "dummy"
+          python main.py --simulate
+
+      - name: Compile Windows app with Nuitka
+        shell: pwsh
+        run: |
+          python -m nuitka `
+            --mode=standalone `
+            --assume-yes-for-downloads `
+            --output-dir=build/windows `
+            --output-filename=Bonebound.exe `
+            --windows-console-mode=disable `
+            --windows-icon-from-ico=assets/ui/Bonebound.ico `
+            --company-name=knorbay `
+            --product-name=Bonebound `
+            --file-version=0.1.0.0 `
+            --product-version=0.1.0.0 `
+            --include-data-dir=assets=assets `
+            --remove-output `
+            main.py
+
+      - name: Find and validate Windows bundle
+        shell: pwsh
+        run: |
+          $dist = Get-ChildItem build/windows -Directory -Filter "*.dist" | Select-Object -First 1
+          if (-not $dist) { throw "Nuitka did not produce a Windows standalone directory." }
+          Move-Item $dist.FullName build/windows/Bonebound
+          $exe = Get-ChildItem build/windows/Bonebound -File -Filter "Bonebound.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Bonebound.exe was not found in the Windows bundle." }
+          $env:SDL_VIDEODRIVER = "dummy"
+          $env:SDL_AUDIODRIVER = "dummy"
+          $process = Start-Process -FilePath $exe.FullName -ArgumentList "--simulate" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged Windows simulation failed with exit code $($process.ExitCode)." }
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/windows/Bonebound -DestinationPath Bonebound-v0.1.0-windows-x64.zip -CompressionLevel Optimal
+          if (-not (Test-Path Bonebound-v0.1.0-windows-x64.zip)) { throw "Windows ZIP was not created." }
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
+        with:
+          name: Bonebound-v0.1.0-windows-x64
+          path: Bonebound-v0.1.0-windows-x64.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux x64
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes patchelf
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Validate source
+        run: |
+          SDL_VIDEODRIVER=dummy \
+          SDL_AUDIODRIVER=dummy \
+          python main.py --simulate
+
+      - name: Compile Linux app with Nuitka
+        run: |
+          python -m nuitka \
+            --mode=standalone \
+            --assume-yes-for-downloads \
+            --output-dir=build/linux \
+            --output-filename=Bonebound \
+            --linux-icon=assets/ui/bonebound_app_icon.png \
+            --include-data-dir=assets=assets \
+            --remove-output \
+            main.py
+
+      - name: Find and validate Linux bundle
+        run: |
+          DIST_PATH="$(find build/linux -maxdepth 1 -type d -name '*.dist' | head -n 1)"
+          if [ -z "$DIST_PATH" ]; then
+            echo "ERROR: Nuitka did not produce a Linux standalone directory."
+            exit 1
+          fi
+          mv "$DIST_PATH" build/linux/Bonebound
+          test -x build/linux/Bonebound/Bonebound
+          SDL_VIDEODRIVER=dummy \
+          SDL_AUDIODRIVER=dummy \
+          build/linux/Bonebound/Bonebound --simulate
+
+      - name: Package Linux build
+        run: |
+          cd build/linux
+          zip -r ../../Bonebound-v0.1.0-linux-x64.zip Bonebound
+          cd ../..
+          unzip -t Bonebound-v0.1.0-linux-x64.zip
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v7
+        with:
+          name: Bonebound-v0.1.0-linux-x64
+          path: Bonebound-v0.1.0-linux-x64.zip
           if-no-files-found: error
