@@ -44,6 +44,9 @@ jobs:
             --mode=app \
             --assume-yes-for-downloads \
             --output-dir=build/macos \
+            --output-filename=Bonebound \
+            --macos-app-name=Bonebound \
+            --macos-signed-app-name=com.knorbay.Bonebound \
             --macos-app-icon=assets/ui/Bonebound.icns \
             --include-data-dir=assets=assets \
             --remove-output \
