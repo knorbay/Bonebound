@@ -98,7 +98,10 @@ class CombatEngine:
 
     @property
     def wave_number(self):
-        return self.enemy_index + 1
+        # Spawning after the final enemy advances the internal cursor once more
+        # before switching to victory. Keep presentation state inside the
+        # stage's real range so the victory transition can never show 4/3.
+        return min(self.wave_total, max(0, self.enemy_index + 1))
 
     @property
     def wave_total(self):

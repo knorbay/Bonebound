@@ -333,6 +333,18 @@ def test_campaign_scale_and_boss_phase():
     assert .30 <= final_rate <= .62, final_rate
 
 
+def test_wave_counter_bounds():
+    hero = Hero()
+    loadout = starter_loadout()
+    hero.equipment = loadout["equipment"]
+    hero.inventory = loadout["inventory"]
+    battle = CombatEngine(hero, STAGES[0], random.Random(7500))
+    battle.enemy_index = battle.wave_total - 1
+    battle._spawn_next_enemy()
+    assert battle.outcome.value == "victory"
+    assert battle.wave_number == battle.wave_total
+
+
 def test_content_expansion():
     assert len(ITEM_TEMPLATES) >= 81
     for template_id in NEW_GEAR:
@@ -784,6 +796,7 @@ def main():
     test_balance_save_migration()
     test_launch_balance()
     test_campaign_scale_and_boss_phase()
+    test_wave_counter_bounds()
     test_content_expansion()
     test_rat_animation(game)
     test_enemy_canvases(game)
