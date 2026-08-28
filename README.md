@@ -23,8 +23,10 @@ Arayüz fareyle kullanılır. `Esc` önceki ekrana döner; savaş sırasında ge
 - Savaş içi envanter ve tut-sürükle-bırak saha mixer'ı
 - Her eşya çiftini kabul eden evrensel fusion sistemi; tarifli özel eşyalar, etkili aktarımlar ve görsel koleksiyon birleşimleri
 - Beş iksir tipi, iksir-iksir fusion'ları, beş kademeli temper, element bağlama ve otomatik bölüm sonu ganimeti
-- 69 özgün item ikonu; ekipmandaki görselle birebir eşleşen, ele/kabzaya kilitli silah-kalkan çizimi
-- Sekiz durumlu 96 piksellik kemik maskeli Wayfarer, düşman koşu setleri ve uzaktan yaklaşmalı sahne girişleri
+- 81 ayrı item ikonu; lisanslı el-piksel tabanlar ile Bonebound'a özel relik/rün dönüşümleri ve ele/kabzaya kilitli silah-kalkan çizimi
+- Tekil iksir slotları, azalan getirili mixer stat aktarımı ve özel fusion görselleri
+- 1000+ HP final boss eğrisi, boss ikinci fazları ve dalgalar arası kısa toparlanma
+- Sven Hero Knight'ın katmanlı kaynağından uyarlanan sekiz durumlu kemik maskeli Wayfarer; 57 yerel animasyon karesi, kareye özel ekipman tutuşları, düşman koşu setleri ve uzaktan yaklaşmalı sahne girişleri
 - Daha düşük başlangıç saldırısı ve bölüm ilerledikçe daha sert yükselen düşman dayanıklılığı
 - 25 düşmanın her animasyonunda ortak taban hizası, güvenli savaş kadrajı ve ayrıntıyı koruyan yenilgi efekti
 

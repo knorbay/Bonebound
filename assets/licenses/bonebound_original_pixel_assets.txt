@@ -1,5 +1,5 @@
-Bonebound original pixel assets
+Bonebound original pixel assets and adaptations
 
-The item icon set, unarmored Wayfarer animation set, and higher-resolution Dust Rat sheets were created specifically for Bonebound without generative image tools.
+The named relic, essence and material icon supplements, Bonebound palette/rune transformations, equipment alignment metadata, and higher-resolution Dust Rat sheets were created specifically for Bonebound without generative image tools. The hero animation and selected item silhouettes derive from the separately documented licensed sources in ASSET_SOURCES.md.
 
 Copyright 2026 Bonebound project contributors. All rights reserved for the project owner.

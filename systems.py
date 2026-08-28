@@ -120,6 +120,8 @@ class SaveManager:
 class Mixer:
     PRIMARY_STAT = {ItemKind.WEAPON: "attack", ItemKind.SHIELD: "defense"}
     PRIMAL_CAP_BONUS_LIMIT = 4
+    FUSION_PRIMARY_RATE = .34
+    FUSION_SECONDARY_RATE = .42
 
     @staticmethod
     def _reinforcement_limit(item):
@@ -195,6 +197,32 @@ class Mixer:
             elif item.template_id == "frostglass":
                 result["defense"] = max(1, item.tier)
         return result
+
+    @classmethod
+    def _absorbed_stat_gain(cls, item, catalyst, stat, value):
+        """Return a diminishing fusion gain instead of adding whole items.
+
+        The kept object remains the identity of the result. A catalyst lends a
+        fraction of its power, with secondary channels absorbing slightly more
+        readily so high-tier gear does not collapse into one enormous number.
+        """
+        value = max(0, int(value))
+        if not value:
+            return 0
+        primary = cls.PRIMARY_STAT.get(item.kind)
+        rate = cls.FUSION_PRIMARY_RATE if stat == primary else cls.FUSION_SECONDARY_RATE
+        if catalyst.kind != item.kind:
+            rate *= .78
+        before = max(0, int(item.stats.get(stat, 0)))
+        soft_cap = {
+            "health": 8 + item.tier * 7,
+            "attack": 7 + item.tier * 6,
+            "defense": 4 + item.tier * 4,
+            "luck": 2 + item.tier,
+        }[stat]
+        if before >= soft_cap:
+            rate *= .62
+        return max(1, round(value * rate))
 
     @staticmethod
     def _potion_channels(item):
@@ -289,17 +317,28 @@ class Mixer:
             primary = cls.PRIMARY_STAT.get(item.kind)
             if primary:
                 active.add(primary)
+            same_template = item.template_id == catalyst.template_id and item.kind == catalyst.kind
             for key, value in cls._transferable_stats(catalyst).items():
+                # Identical gear reinforces once; it does not transfer its full
+                # stat block and then reinforce a second time.
+                if same_template:
+                    continue
                 if key not in active and len(active) >= 2:
                     continue
-                cap = item.caps.get(key, max(item.stats.get(key, 0) + abs(value) * 3, abs(value)))
                 before = item.stats.get(key, 0)
-                item.caps[key] = max(item.caps.get(key, 0), cap)
-                item.stats[key] = min(item.caps[key], before + value)
+                gain = cls._absorbed_stat_gain(item, catalyst, key, value)
+                if not gain:
+                    continue
+                if key in item.caps:
+                    cap = max(before, int(item.caps[key]))
+                else:
+                    cap = before + max(gain, round(value * .58))
+                    item.caps[key] = cap
+                item.stats[key] = min(cap, before + gain)
                 if item.stats[key] != before:
                     active.add(key)
                     effectful = True
-            if item.template_id == catalyst.template_id and item.kind == catalyst.kind:
+            if same_template:
                 effectful = cls._reinforce(item) or effectful
                 for key in set(item.caps) | set(catalyst.caps):
                     item.caps[key] = max(item.caps.get(key, 0), catalyst.caps.get(key, 0), item.stats.get(key, 0))
@@ -316,11 +355,11 @@ class Mixer:
                     if key == "duration_turns":
                         item.effects[key] = max(before, value)
                     elif key == "heal_flat":
-                        item.effects[key] = min(120, before + value)
+                        item.effects[key] = min(120, before + max(1, round(value * .45)))
                     elif key in {"heal_percent", "revive_percent"}:
-                        item.effects[key] = min(1.0, before + value)
+                        item.effects[key] = min(1.0, before + value * .5)
                     else:
-                        item.effects[key] = min(15, before + value)
+                        item.effects[key] = min(15, before + max(1, round(value * .45)))
                     effectful = effectful or item.effects[key] != before
             elif catalyst.kind == ItemKind.ESSENCE and catalyst.element != Element.NEUTRAL:
                 before = (item.element, item.element_power)

@@ -1,0 +1,7 @@
+Hero Knight by Sven Thole
+Source: https://sventhole.itch.io/hero-knight
+
+The author permits this asset to be used in commercial and non-commercial games. The pack itself may not be resold as an asset. Bonebound credits the author even though the source page does not require attribution.
+
+Downloaded source SHA-256:
+e9f750ddb5c315b7c3a93b8d0429df0badd64eec071ce05ebe9baf70a0db9bc6  HeroKnight.pyxel

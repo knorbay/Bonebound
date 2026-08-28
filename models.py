@@ -193,7 +193,7 @@ class Stage:
 
 
 class Hero:
-    BALANCE_VERSION = 2
+    BALANCE_VERSION = 3
 
     def __init__(self):
         self.balance_version = self.BALANCE_VERSION
@@ -373,7 +373,7 @@ class Hero:
             need = self.xp_needed
             self.experience -= need
             self.level += 1
-            self.base_stats["health"] += 12
+            self.base_stats["health"] += 16
             self.stat_points += 1
             levels += 1
         return levels
@@ -381,7 +381,7 @@ class Hero:
     def spend_point(self, stat):
         if self.stat_points <= 0 or stat not in self.base_stats:
             return False
-        self.base_stats[stat] += 8 if stat == "health" else 1
+        self.base_stats[stat] += 10 if stat == "health" else 1
         self.stat_points -= 1
         return True
 
@@ -474,7 +474,7 @@ class Hero:
         hero.ending_seen = bool(data.get("ending_seen", False))
         hero.endless_depth = max(0, int(data.get("endless_depth", 0)))
         hero.best_endless = max(hero.endless_depth, int(data.get("best_endless", 0)))
-        if saved_balance_version < cls.BALANCE_VERSION:
+        if saved_balance_version < 2:
             # v2 removes the shield guard pool and lowers the launch loadout's
             # excessive attack. Migrate existing campaigns so resuming an old
             # save does not silently preserve the retired balance rules.
@@ -486,5 +486,27 @@ class Hero:
                     item.stats["attack"] = max(1, item.stats.get("attack", 0) - 3)
                     if "attack" in item.caps:
                         item.caps["attack"] = min(16, item.caps["attack"])
+        if saved_balance_version < 3:
+            # v3 gives campaign health room to reach roughly half of the final
+            # boss's 1000 HP scale and retires newly-created potion stacks.
+            hero.base_stats["health"] += max(0, hero.level - 1) * 4
+            for item in hero.inventory + hero.pending_loot + hero.equipment_items():
+                if item.kind == ItemKind.POTION:
+                    item.max_stack = 1
+            # Preserve old consumables while expanding their stacks into free
+            # backpack cells. A legacy overflow stack drains normally but can
+            # never accept new potions.
+            additions = []
+            for item in hero.inventory:
+                if item.kind != ItemKind.POTION:
+                    continue
+                while item.stack > 1 and len(hero.inventory) + len(additions) < hero.inventory_capacity:
+                    item.stack -= 1
+                    clone = Item.from_dict(item.to_dict())
+                    clone.uid = uuid.uuid4().hex[:12]
+                    clone.stack = 1
+                    clone.max_stack = 1
+                    additions.append(clone)
+            hero.inventory.extend(additions)
         hero.balance_version = cls.BALANCE_VERSION
         return hero

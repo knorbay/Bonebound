@@ -78,6 +78,7 @@ class CombatEngine:
         self.hero_attacks = 0
         self.enemy_attacks = 0
         self.enemy_chill = 0.0
+        self.boss_phase_triggered = False
         self.shatter_charge = False
         self.guardian_used = False
         self.last_stand_used = False
@@ -126,6 +127,32 @@ class CombatEngine:
         template = ENEMIES[self.enemy.enemy_id] if self.enemy else None
         return bool(template and name in template.traits)
 
+    def _trigger_boss_phase(self):
+        if (
+            not self.enemy
+            or not self.enemy.boss
+            or self.boss_phase_triggered
+            or not self.enemy_has("second_phase")
+            or self.enemy.hp <= 0
+            or self.enemy.hp > self.enemy.max_hp * .50
+        ):
+            return False
+        self.boss_phase_triggered = True
+        overlord = self.enemy_has("overlord")
+        recovery = max(1, round(self.enemy.max_hp * (.10 if overlord else .07)))
+        self.enemy.hp = min(self.enemy.max_hp, self.enemy.hp + recovery)
+        self.enemy.attack = max(1, round(self.enemy.attack * (1.18 if overlord else 1.12)))
+        self.enemy.defense += 4 if overlord else 2
+        self.enemy_anim = "ready"
+        self.emit(CombatEvent(
+            "boss_phase",
+            f"{self.enemy.name} enters its final rite: +{recovery} HP, attack and defense rise.",
+            "enemy",
+            recovery,
+            element=self.enemy.element,
+        ))
+        return True
+
     def emit(self, event):
         self.events.append(event)
         self.history.append(event)
@@ -145,11 +172,13 @@ class CombatEngine:
             return
         template = ENEMIES[self.stage.enemies[self.enemy_index]]
         difficulty = max(1.0, float(getattr(self.stage, "difficulty", 1.0)))
-        health_scale = difficulty
+        rank_health = 1.08 if template.boss else 1.04 if template.elite else 1.0
+        health_scale = difficulty * rank_health
         attack_scale = 1.0 + (difficulty - 1.0) * .82
         defense_scale = 1.0 + (difficulty - 1.0) * .54
         max_hp = max(1, round(template.max_hp * health_scale))
         self.enemy_chill = 0.0
+        self.boss_phase_triggered = False
         self.enemy = EnemyState(
             template.enemy_id,
             template.name,
@@ -270,6 +299,7 @@ class CombatEngine:
         self.emit(CombatEvent("hero_hit", text, "hero", damage, critical, blocked, self.hero.weapon_element()))
         for event in proc_events:
             self.emit(event)
+        self._trigger_boss_phase()
         if self.hero_hp <= 0 and not self._survive_lethal():
             self._defeat("Thorns claim the final breath.")
             return
@@ -297,6 +327,11 @@ class CombatEngine:
             self.hero_hp += restored
             if restored:
                 self.emit(CombatEvent("heal", f"Your weapon restores {restored} HP.", "hero", restored))
+        if self.stage.index >= 5 and self.enemy_index + 1 < len(self.stage.enemies):
+            recovered = min(max(2, round(self.hero_max_hp * .06)), self.hero_max_hp - self.hero_hp)
+            self.hero_hp += recovered
+            if recovered:
+                self.emit(CombatEvent("heal", f"You catch your breath between waves and recover {recovered} HP.", "hero", recovered))
         self.phase = "wave_clear"
         self.timer = .95
 
@@ -389,6 +424,7 @@ class CombatEngine:
             self.enemy.hp = max(0, self.enemy.hp - retaliation)
             self.total_damage += retaliation
             self.emit(CombatEvent("counter", f"Retaliation deals {retaliation} damage.", "hero", retaliation, element=self.hero.weapon_element()))
+            self._trigger_boss_phase()
         if self.boost_turns > 0:
             self.boost_turns -= 1
             if self.boost_turns == 0 and any(self.bonus_stats.values()):

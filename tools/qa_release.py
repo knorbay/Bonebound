@@ -47,7 +47,13 @@ SPECIAL_TRINKETS = (
     "sovereign_reliquary",
 )
 
-HERO_LAYOUTS = {"idle": 6, "run": 8, "attack": 8, "critical": 10, "hurt": 4, "guard": 5, "victory": 6, "defeat": 8}
+NEW_GEAR = (
+    "pilgrim_crook", "slag_hammer", "moonlit_khopesh", "basilisk_needle", "sovereign_axe",
+    "gravewood_targe", "mothwing_ward", "dragonbone_pavise",
+    "pilgrim_bell", "ashglass_charm", "witchglass_bead", "oathstone_necklace",
+)
+
+HERO_LAYOUTS = {"idle": 8, "run": 10, "attack": 6, "critical": 7, "hurt": 3, "guard": 5, "victory": 8, "defeat": 10}
 
 
 def pygame_to_pil(surface):
@@ -83,6 +89,14 @@ def test_drag_drop(game):
 
 
 def test_potions():
+    hero = Hero()
+    first = create_item("minor_tonic", random.Random(80), 1)
+    second = create_item("minor_tonic", random.Random(81), 1)
+    assert first.max_stack == second.max_stack == 1
+    assert hero.add_item(first) and hero.add_item(second)
+    assert len(hero.inventory) == 2
+    assert all(item.stack == 1 for item in hero.inventory)
+
     for index, template_id in enumerate(NEW_POTIONS):
         hero = Hero()
         potion = create_item(template_id, random.Random(100 + index), 20)
@@ -134,6 +148,22 @@ def test_universal_fusions():
         ok, message, result = Mixer.mix(hero, left.uid, right.uid)
         assert ok, message
         assert result.effects.get("fusion_visual")
+
+    # A catalyst contributes only part of its stat budget. A 10 ATK kept
+    # weapon mixed with a 5 ATK weapon must not become a direct 15 ATK sum.
+    left = create_item("pilgrim_crook", random.Random(4900), 1)
+    right = create_item("wayfarer_blade", random.Random(4901), 1)
+    left.stats = {"attack": 10}
+    left.caps = {"attack": 18}
+    right.stats = {"attack": 5}
+    result = Mixer.visual_result(left, right)
+    assert result.stats["attack"] == 12, result.stats
+    assert result.stats["attack"] != 15
+
+    same_left = create_item("rusted_falchion", random.Random(4910), 1)
+    same_right = create_item("rusted_falchion", random.Random(4911), 1)
+    reinforced = Mixer.visual_result(same_left, same_right)
+    assert reinforced.stats["attack"] == same_left.stats["attack"] + 2
 
 
 def test_shields_and_trinkets():
@@ -232,11 +262,95 @@ def test_launch_balance():
     assert STAGES[-1].difficulty > 1.25
 
 
+def test_campaign_scale_and_boss_phase():
+    hero = Hero()
+    for _ in range(24):
+        hero.gain_xp(hero.xp_needed)
+    for template_id, slot in (
+        ("sovereign_axe", "weapon"),
+        ("dragonbone_pavise", "shield"),
+        ("witchglass_bead", "ring1"),
+        ("fortune_eclipse", "ring2"),
+    ):
+        item = create_item(template_id, random.Random(7200 + len(hero.inventory)), 1)
+        assert hero.add_item(item)
+        assert hero.equip(item.uid, slot)[0]
+    assert hero.level == 25
+    assert hero.total_stats()["health"] == 495, hero.total_stats()
+
+    boss_health = []
+    for stage in STAGES[4::5]:
+        battle = CombatEngine(hero, stage, random.Random(7300 + stage.index))
+        battle.enemy_index = len(stage.enemies) - 2
+        battle._spawn_next_enemy()
+        assert battle.enemy.boss
+        boss_health.append(battle.enemy.max_hp)
+    assert boss_health == sorted(boss_health)
+    assert boss_health[-1] >= 1000, boss_health
+
+    final = CombatEngine(hero, STAGES[-1], random.Random(7400))
+    final.enemy_index = len(STAGES[-1].enemies) - 2
+    final._spawn_next_enemy()
+    before_attack = final.enemy.attack
+    final.enemy.hp = final.enemy.max_hp // 2
+    assert final._trigger_boss_phase()
+    assert final.boss_phase_triggered
+    assert final.enemy.attack > before_attack
+    assert any(event.event_type == "boss_phase" for event in final.drain_events())
+
+    def campaign_win_rate(stage_index, level, gear, attack_points, health_points):
+        wins = 0
+        samples = 160
+        for seed in range(samples):
+            runner = Hero()
+            for _ in range(level - 1):
+                runner.gain_xp(runner.xp_needed)
+            for _ in range(attack_points):
+                assert runner.spend_point("attack")
+            for _ in range(health_points):
+                assert runner.spend_point("health")
+            for template_id, slot in zip(gear, ("weapon", "shield", "ring1", "ring2")):
+                item = create_item(template_id, random.Random(seed * 13 + len(runner.inventory)), stage_index)
+                for _ in range(2):
+                    Mixer._reinforce(item)
+                assert runner.add_item(item)
+                assert runner.equip(item.uid, slot)[0]
+            fight = CombatEngine(runner, STAGES[stage_index - 1], random.Random(100000 + seed))
+            for _ in range(4000):
+                if not fight.active:
+                    break
+                fight.update(1.0)
+            wins += fight.outcome.value == "victory"
+        return wins / samples
+
+    act_four_rate = campaign_win_rate(
+        20, 18, ("basilisk_needle", "runic_bastion", "witchglass_bead", "watcher_stone"), 9, 8,
+    )
+    final_rate = campaign_win_rate(
+        25, 22, ("voidglass_sabre", "dragonbone_pavise", "fortune_eclipse", "oathstone_necklace"), 11, 10,
+    )
+    assert .40 <= act_four_rate <= .72, act_four_rate
+    assert .30 <= final_rate <= .62, final_rate
+
+
+def test_content_expansion():
+    assert len(ITEM_TEMPLATES) >= 81
+    for template_id in NEW_GEAR:
+        template = ITEM_TEMPLATES[template_id]
+        assert template["description"]
+        assert (ROOT / "assets" / "items" / f"{template_id}.png").is_file()
+
+
 def test_rat_animation(game):
     for state in ("idle", "run", "attack", "defeat"):
         frames = game.sprites.enemy_frames.get(("dust_rat", state), [])
         assert len(frames) == 6, (state, len(frames))
-        assert all(frame.get_size() == (52, 36) for frame in frames)
+        assert len({frame.get_size() for frame in frames}) == 1
+        for frame in frames:
+            bounds = frame.get_bounding_rect(min_alpha=8)
+            assert bounds.width and bounds.height
+            assert bounds.left >= 4 and bounds.right <= frame.get_width() - 4
+            assert bounds.top >= 4 and bounds.bottom <= frame.get_height() - 3
 
 
 def test_enemy_canvases(game):
@@ -248,6 +362,11 @@ def test_enemy_canvases(game):
             frames = game.sprites.enemy_frames.get((enemy_id, state), [])
             assert frames, (enemy_id, state)
             sizes.update(frame.get_size() for frame in frames)
+            for frame in frames:
+                bounds = frame.get_bounding_rect(min_alpha=8)
+                assert bounds.width and bounds.height, (enemy_id, state)
+                assert bounds.left >= 4 and bounds.right <= frame.get_width() - 4, (enemy_id, state, bounds, frame.get_size())
+                assert bounds.top >= 4 and bounds.bottom <= frame.get_height() - 3, (enemy_id, state, bounds, frame.get_size())
         assert len(sizes) == 1, (enemy_id, sizes)
 
 
@@ -261,6 +380,16 @@ def test_hero_cohesion(game):
             assert bounds.width <= 94 and bounds.height <= 94, (state, bounds)
             # The old human face/hand palette must not leak back into any pose.
             assert all(frame.get_at((x, y))[:3] != (222, 174, 125) for y in range(96) for x in range(96))
+
+        poses = game.sprites.hero_equipment_points.get(state, [])
+        assert len(poses) == expected_count, (state, "equipment points", len(poses))
+        if state in {"hurt", "defeat"}:
+            continue
+        for pose in poses:
+            for key in ("weapon_grip", "weapon_elbow", "shield_center"):
+                x, y = pose[key]
+                assert 1 <= x <= 95 and 1 <= y <= 95, (state, key, pose[key])
+            assert -180 <= pose["weapon_angle"] <= 180
 
     idle = game.sprites.frames[("hero", "idle")][0]
     mask_points = []
@@ -312,7 +441,7 @@ def render_hero_state_catalog(game, output_dir):
     surface = pygame.Surface((1200, 670))
     surface.fill((8, 12, 17))
     game.ui.text(surface, "BONEBOUND  •  MYSTIC WAYFARER", (40, 26), COLORS["gold"], "medium")
-    chosen_frames = {"idle": 0, "run": 2, "attack": 5, "critical": 7, "hurt": 1, "guard": 3, "victory": 2, "defeat": 5}
+    chosen_frames = {"idle": 0, "run": 3, "attack": 4, "critical": 5, "hurt": 1, "guard": 3, "victory": 4, "defeat": 7}
     for index, state in enumerate(HERO_LAYOUTS):
         row, col = divmod(index, 4)
         card = pygame.Rect(25 + col * 292, 72 + row * 292, 274, 268)
@@ -382,6 +511,25 @@ def render_potion_catalog(game, output_dir):
         game.ui.fitted_text(surface, item.display_name, pygame.Rect(card.x + 96, card.y + 19, 150, 25), COLORS["text"], "small")
         game.ui.wrapped(surface, item.stat_text(), pygame.Rect(card.x + 96, card.y + 51, 150, 42), game.ui.item_color(item), "tiny", 3, 2)
     pygame.image.save(surface, output_dir / "item_potion_catalog_v4.png")
+
+
+def render_new_gear_catalog(game, output_dir):
+    surface = pygame.Surface((1200, 760))
+    surface.fill((8, 12, 17))
+    game.ui.text(surface, "BONEBOUND • TWELVE NEW RELICS", (34, 24), COLORS["gold"], "medium")
+    for index, template_id in enumerate(NEW_GEAR):
+        row, col = divmod(index, 4)
+        card = pygame.Rect(20 + col * 295, 70 + row * 225, 275, 205)
+        item = create_item(template_id, random.Random(8100 + index), max(1, ITEM_TEMPLATES[template_id]["tier"] * 5))
+        color = game.ui.item_color(item)
+        game.ui.ornamented_panel(surface, card, (15, 21, 28), color, 9, 2)
+        icon = pygame.Rect(card.x + 12, card.y + 20, 92, 92)
+        game.ui.draw_item_icon(surface, icon, item, True)
+        game.ui.fitted_text(surface, item.display_name, pygame.Rect(card.x + 112, card.y + 21, 148, 27), COLORS["text"], "small")
+        game.ui.fitted_text(surface, item.category_label.upper(), pygame.Rect(card.x + 112, card.y + 53, 148, 20), COLORS["muted"], "tiny")
+        game.ui.wrapped(surface, item.stat_text(), pygame.Rect(card.x + 112, card.y + 79, 148, 42), color, "tiny", 3, 2)
+        game.ui.wrapped(surface, item.description, pygame.Rect(card.x + 16, card.y + 132, card.width - 32, 57), COLORS["muted"], "tiny", 3, 3)
+    pygame.image.save(surface, output_dir / "new_relic_catalog_v11.png")
 
 
 def render_fusion_catalog(game, output_dir):
@@ -574,6 +722,32 @@ def render_enemy_fit_catalog(game, output_dir):
         pygame.image.save(atlas, output_dir / f"enemy_fit_{state}_v7.png")
 
 
+def render_boss_scale_catalog(game, output_dir):
+    atlas = pygame.Surface((1200, 380))
+    atlas.fill((7, 11, 18))
+    game.ui.text(atlas, "CAMPAIGN BOSSES • SECOND PHASE SCALE", (28, 18), COLORS["gold"], "medium")
+    for index, stage in enumerate(STAGES[4::5]):
+        game.new_game()
+        game.begin_battle(stage)
+        game.transition_target = None
+        game.battle.enemy_index = len(stage.enemies) - 2
+        game.battle._spawn_next_enemy()
+        game.battle.phase = "player_windup"
+        game.battle.enemy.hp = game.battle.enemy.max_hp // 2
+        game.battle._trigger_boss_phase()
+        game.screen_surface.fill((7, 11, 18))
+        pygame.draw.line(game.screen_surface, (85, 70, 58), (500, 590), (1160, 590), 3)
+        game.time = .32
+        game.draw_enemy(pygame.Vector2(830, 580), game.battle.enemy, "ready", .32)
+        crop = game.screen_surface.subsurface((500, 190, 660, 420)).copy()
+        card = pygame.Rect(10 + index * 238, 62, 228, 300)
+        atlas.blit(pygame.transform.smoothscale(crop, (228, 225)), card.topleft)
+        pygame.draw.rect(atlas, game.ui.item_color(create_item(stage.first_clear_item, random.Random(9000 + index), stage.index)), card, 2)
+        game.ui.fitted_text(atlas, game.battle.enemy.name, pygame.Rect(card.x + 8, card.y + 232, card.width - 16, 23), COLORS["text"], "tiny", "center")
+        game.ui.text(atlas, f"{game.battle.enemy.max_hp} HP  •  PHASE II", (card.centerx, card.y + 272), COLORS["gold"], "tiny", "center")
+    pygame.image.save(atlas, output_dir / "boss_scale_v11.png")
+
+
 def main():
     output_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "work" / "qa_release"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -585,6 +759,8 @@ def main():
     test_shields_and_trinkets()
     test_balance_save_migration()
     test_launch_balance()
+    test_campaign_scale_and_boss_phase()
+    test_content_expansion()
     test_rat_animation(game)
     test_enemy_canvases(game)
     test_hero_cohesion(game)
@@ -594,6 +770,7 @@ def main():
     render_equipment_hold_catalog(game, output_dir)
     render_shield_brace_animation(game, output_dir)
     render_potion_catalog(game, output_dir)
+    render_new_gear_catalog(game, output_dir)
     render_fusion_catalog(game, output_dir)
     render_entrance_animation(game, output_dir)
     render_drag_preview(game, output_dir)
@@ -602,6 +779,7 @@ def main():
     render_rat_and_shield(game, output_dir)
     render_final_ui(game, output_dir)
     render_enemy_fit_catalog(game, output_dir)
+    render_boss_scale_catalog(game, output_dir)
     pygame.quit()
     print(f"qa_release_ok potions={len(NEW_POTIONS)} recipes={len(NEW_RECIPES)} trinkets={len(SPECIAL_TRINKETS)} universal_pairs={len(ITEM_TEMPLATES) ** 2} output={output_dir}")
 

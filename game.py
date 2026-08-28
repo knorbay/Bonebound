@@ -476,6 +476,11 @@ class Game:
                 self.audio.play("confirm")
             elif event.event_type == "defeat":
                 self.audio.play("error")
+            elif event.event_type == "boss_phase":
+                self.audio.play("critical")
+                self.shake = .18
+                self.enemy_hit_flash = .28
+                self.float_notices.append(FloatNotice("SECOND PHASE", 870, 418, ELEMENT_COLORS[event.element], 1.15))
             if event.event_type == "enemy_hit" and event.blocked:
                 self.hero_block_flash = .34
                 self.impact_pause = max(self.impact_pause, .045)
@@ -1491,57 +1496,32 @@ class Game:
         shield = self.hero.equipment.get("shield")
         unit = hero_rect.height / 96
         pose = {"walk": "run", "ready": "idle"}.get(anim, anim)
-        counts = {"idle": 6, "run": 8, "attack": 8, "critical": 10, "guard": 5, "victory": 6}
-        speeds = {"idle": 5.0, "run": 12.0, "attack": 16.0, "critical": 18.0, "guard": 12.0, "victory": 7.0}
-        count = counts.get(pose, 1)
-        cursor = max(0, int(elapsed * speeds.get(pose, 1.0)))
-        frame = min(count - 1, cursor) if pose in {"attack", "critical", "guard"} else cursor % count
-
-        idle_bob = (0, 0, -1, -1, -1, 0)
-        run_phase = (0, .72, 1, .58, 0, -.72, -1, -.58)
-        run_bob = (0, -1, -2, -1, 0, -1, -2, -1)
-        attack_right = ((64, 44), (54, 32), (48, 24), (62, 26), (80, 40), (94, 54), (88, 60), (72, 48))
-        attack_left = ((26, 56), (22, 56), (20, 54), (24, 52), (32, 54), (40, 56), (38, 58), (30, 56))
-        critical_right = ((62, 48), (52, 36), (42, 24), (38, 16), (50, 14), (74, 24), (98, 44), (104, 60), (88, 60), (70, 48))
-        critical_left = ((24, 60), (20, 60), (16, 58), (14, 54), (18, 50), (28, 48), (40, 54), (44, 58), (38, 60), (28, 58))
-        guard_right = ((64, 56), (66, 58), (68, 60), (68, 60), (66, 58))
-        guard_left = ((48, 52), (56, 50), (64, 48), (66, 48), (56, 50))
-        victory_bob = (0, -2, -3, -3, -2, 0)
-
-        if pose == "attack":
-            right_hand, left_hand = attack_right[frame], attack_left[frame]
-            angle = (0, 34, 67, 82, 54, 12, -42, -10)[frame]
-            shield_angle = (-4, -2, 1, 4, 7, 5, 1, -3)[frame]
-        elif pose == "critical":
-            right_hand, left_hand = critical_right[frame], critical_left[frame]
-            angle = (-4, 30, 62, 92, 118, 92, 46, -12, -72, -10)[frame]
-            shield_angle = (-5, -3, 0, 3, 6, 9, 8, 4, 0, -4)[frame]
-        elif pose == "guard":
-            right_hand, left_hand = guard_right[frame], guard_left[frame]
-            angle = -48
-            shield_angle = (-4, -9, -13, -15, -8)[frame]
-        elif pose == "run":
-            phase = run_phase[frame]
-            bob = run_bob[frame]
-            right_hand = ((32 + round(4 * phase)) * 2, (25 + bob - round(3 * phase)) * 2)
-            left_hand = ((16 + round(4 * phase)) * 2, (25 + bob + round(3 * phase)) * 2)
-            angle = -12 + phase * 8
-            shield_angle = phase * -5
-        elif pose == "victory":
-            bob = victory_bob[frame]
-            right_hand, left_hand = (58, (10 + bob) * 2), (26, (21 + bob) * 2)
-            angle = 44 + math.sin(elapsed * 2.8) * 3
-            shield_angle = -5 + math.sin(elapsed * 2.8) * 3
+        metadata = self.sprites.hero_equipment_pose(pose, elapsed)
+        if metadata:
+            right_hand = metadata["weapon_grip"]
+            right_elbow = metadata["weapon_elbow"]
+            shield_point = metadata["shield_center"]
+            angle = metadata["weapon_angle"]
         else:
-            bob = idle_bob[frame % len(idle_bob)]
-            drift = ((0, 0), (0, -1), (1, -1), (1, 0), (0, 1), (0, 0))[frame % 6]
-            right_hand = ((34 + drift[0]) * 2, (24 + bob + drift[1]) * 2)
-            left_hand = ((14 - drift[0]) * 2, (27 + bob - drift[1]) * 2)
-            angle = (-18, -17, -16, -17, -18, -19)[frame % 6]
-            shield_angle = (-4, -2, 0, 2, 0, -2)[frame % 6]
+            right_hand, right_elbow, shield_point = (70, 51), (57, 45), (34, 53)
+            angle = -38
 
         right_grip = (hero_rect.x + right_hand[0] * unit, hero_rect.y + right_hand[1] * unit)
-        left_grip = (hero_rect.x + left_hand[0] * unit, hero_rect.y + left_hand[1] * unit)
+        right_elbow = (hero_rect.x + right_elbow[0] * unit, hero_rect.y + right_elbow[1] * unit)
+        shield_center = (hero_rect.x + shield_point[0] * unit, hero_rect.y + shield_point[1] * unit)
+
+        # The licensed source keeps equipment on separate layers. Rebuild the
+        # forward forearm here so it follows the original sword arc while the
+        # exact inventory icon remains visible instead of a baked-in weapon.
+        if weapon:
+            pygame.draw.line(
+                self.screen_surface, (29, 27, 29), right_elbow, right_grip,
+                max(3, round(4.2 * unit)),
+            )
+            pygame.draw.line(
+                self.screen_surface, (105, 70, 43), right_elbow, right_grip,
+                max(2, round(2.5 * unit)),
+            )
 
         def blit_at_grip(image, grip, rotation):
             pivot = pygame.Vector2(image.get_width() * .10, image.get_height() * .89)
@@ -1551,14 +1531,15 @@ class Game:
             self.screen_surface.blit(rotated, rotated.get_rect(center=(round(rotated_center.x), round(rotated_center.y))))
 
         if shield:
-            side = max(24, round((27 if pose == "guard" else 24) * unit))
+            side = max(24, round((19 if pose == "guard" else 17) * unit))
             image = self.ui.item_sprite(shield, side, crop=True)
             if image:
-                shield_center = (left_grip[0] - 2 * unit, left_grip[1] + 2 * unit)
+                shield_angle = -8 if pose == "guard" else math.sin(elapsed * 5.2) * 2
                 rotated = pygame.transform.rotate(image, shield_angle)
                 self.screen_surface.blit(rotated, rotated.get_rect(center=(round(shield_center[0]), round(shield_center[1]))))
                 # The fist and leather brace sit over the shield, making it
                 # visually held instead of floating beside the character.
+                left_grip = (shield_center[0] + 1.5 * unit, shield_center[1] - .5 * unit)
                 hand_radius = max(2, round(1.7 * unit))
                 pygame.draw.line(self.screen_surface, (38, 28, 27),
                                  (left_grip[0] - 3 * unit, left_grip[1] + unit),
@@ -1645,12 +1626,16 @@ class Game:
             render_y = y - (74 if enemy.enemy_id in flyers else 0)
             rect = sprite.get_rect(midbottom=(round(x), round(render_y + 18)))
             if self.battle and self.battle.phase != "approach":
-                safe_frame = pygame.Rect(504, 202, 657, 406)
-                fit = min(1.0, safe_frame.width / max(1, rect.width), safe_frame.height / max(1, rect.height))
+                # All settled enemies live inside one explicit stage window.
+                # Include breathing room for the elemental rim so no wing,
+                # weapon or rotated attack pose is clipped at the boundary.
+                safe_frame = pygame.Rect(522, 202, 628, 410)
+                art_frame = safe_frame.inflate(-34, -24)
+                fit = min(1.0, art_frame.width / max(1, rect.width), art_frame.height / max(1, rect.height))
                 if fit < 1.0:
                     sprite = pygame.transform.scale(sprite, (max(1, round(sprite.get_width() * fit)), max(1, round(sprite.get_height() * fit))))
                     rect = sprite.get_rect(midbottom=(round(x), round(render_y + 18)))
-                rect.clamp_ip(safe_frame)
+                rect.clamp_ip(art_frame)
             shadow_width = max(46, round(sprite.get_width() * .72))
             shadow = pygame.Surface((shadow_width, 36), pygame.SRCALPHA)
             pygame.draw.ellipse(shadow, (4, 5, 7, round(255 * fade)), shadow.get_rect())
@@ -1667,6 +1652,22 @@ class Game:
                     ring = pygame.Surface((sprite.get_width() + 70, 42), pygame.SRCALPHA)
                     pygame.draw.ellipse(ring, (*color, round(80 + 90 * charge)), ring.get_rect().inflate(-8, -12), max(2, round(2 + charge * 3)))
                     self.screen_surface.blit(ring, (rect.centerx - ring.get_width() / 2, y - 8))
+                if enemy.boss:
+                    crest_y = rect.top + 10
+                    crown = [
+                        (rect.centerx - 28, crest_y + 11), (rect.centerx - 22, crest_y - 7),
+                        (rect.centerx - 7, crest_y + 3), (rect.centerx, crest_y - 13),
+                        (rect.centerx + 8, crest_y + 3), (rect.centerx + 23, crest_y - 7),
+                        (rect.centerx + 29, crest_y + 11),
+                    ]
+                    pygame.draw.lines(self.screen_surface, (20, 18, 24), False, crown, 7)
+                    pygame.draw.lines(self.screen_surface, color, False, crown, 3)
+                    for point in crown[1::2]:
+                        pygame.draw.circle(self.screen_surface, COLORS["text"], point, 3)
+                        pygame.draw.circle(self.screen_surface, color, point, 2)
+                    if self.battle and self.battle.boss_phase_triggered:
+                        pulse = round(8 + (math.sin(self.time * 7) + 1) * 3)
+                        pygame.draw.circle(self.screen_surface, color, (rect.centerx, rect.centery), max(rect.width, rect.height) // 2 + pulse, 3)
             enemy_mask = pygame.mask.from_surface(sprite, 8)
             rim_color = self.ui.blend(color, COLORS["text"], .34)
             rim = pygame.Surface(sprite.get_size(), pygame.SRCALPHA)

@@ -1,7 +1,10 @@
 import hashlib
+import io
+import json
 import math
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -15,6 +18,43 @@ sys.path.insert(0, str(ROOT))
 ITEM_ROOT = ROOT / "assets" / "items"
 HERO_ROOT = ROOT / "assets" / "characters" / "hero_unarmored"
 ENEMY_ROOT = ROOT / "assets" / "characters" / "enemies_original"
+THIRD_PARTY_ROOT = ROOT / "assets" / "third_party"
+SVEN_HERO_SOURCE = THIRD_PARTY_ROOT / "sven_hero_knight" / "HeroKnight.pyxel"
+ARSENAL_ROOT = THIRD_PARTY_ROOT / "idylwild_arsenal"
+SHIELD_SOURCE_ROOT = THIRD_PARTY_ROOT / "7soul_shields"
+JEWELRY_SOURCE_ROOT = THIRD_PARTY_ROOT / "7soul_jewelry"
+POTION_SOURCE_ROOT = THIRD_PARTY_ROOT / "7soul_potions"
+
+
+EXTERNAL_ITEM_SOURCES = {
+    "weapon": (
+        "sword1.png", "sword2.png", "sword3.png", "sword4.png", "sword5.png",
+        "dagger1.png", "dagger2.png", "dagger3.png", "dagger4.png", "dagger5.png",
+        "axe1.png", "axe2.png", "axe3.png", "axe4.png", "hammer1.png", "hammer2.png",
+        "spear1.png", "spear2.png", "polearm1.png", "polearm2.png", "polearm3.png",
+        "staff1.png", "staff2.png", "staff3.png", "scythe1.png", "scythe2.png",
+    ),
+    "shield": (
+        "E_Wood01.png", "E_Wood02.png", "E_Wood03.png", "E_Wood04.png",
+        "E_Metal01.png", "E_Metal02.png", "E_Metal03.png", "E_Metal04.png",
+        "E_Metal05.png", "E_Metal06.png", "E_Metal07.png", "E_Metal08.png",
+        "E_Metal09.png", "E_Gold01.png", "E_Gold02.png",
+    ),
+    "ring": (
+        "ring_01.png", "ring_02.png", "ring_03_blue.png", "ring_03_gray.png",
+        "ring_03_green.png", "ring_03_light_green.png", "ring_03_light_red.png",
+        "ring_03_pink.png", "ring_03_purple.png", "ring_03_red.png",
+        "necklace_01.png", "necklace_02.png", "necklace_03.png", "necklace_04.png",
+        "necklace_05.png", "necklace_06.png", "necklace_07.png", "necklace_08.png",
+    ),
+    "potion": (
+        "potion_01_red.png", "potion_02_blue.png", "potion_03_yellow.png",
+        "potion_04_green.png", "potion_05_pink.png", "potion_06_blue.png",
+        "potion_07_orange.png", "potion_08_red.png", "potion_09_green.png",
+        "vial_01.png", "vial_02.png", "medicine_01.png", "medicine_04.png",
+        "medicine_07.png", "antidote.png", "bottle_01.png", "bottle_02.png",
+    ),
+}
 
 
 ELEMENT_PALETTES = {
@@ -60,10 +100,44 @@ def weapon_icon(surface, template_id, seed, palette):
         "emberbrand": "flame", "warden_pike": "pike", "rimefang": "fang",
         "stormneedle": "needle", "venomthorn": "thorn", "lantern_sabre": "curve",
         "astral_edge": "split", "sunken_king_blade": "royal", "voidglass_sabre": "curve",
-        "crownless_oath": "great",
+        "crownless_oath": "great", "pilgrim_crook": "crook", "slag_hammer": "hammer",
+        "moonlit_khopesh": "khopesh", "basilisk_needle": "rapier", "sovereign_axe": "axe",
     }.get(template_id, "straight")
     handle_start, hilt = (4, 28), (8, 24)
     outline_line(surface, (121, 73, 42), handle_start, hilt, 3)
+    if profile == "crook":
+        outline_line(surface, (112, 77, 47), (5, 28), (23, 8), 3)
+        pygame.draw.lines(surface, (25, 23, 27), False, [(22, 9), (27, 5), (29, 8), (26, 12)], 5)
+        pygame.draw.lines(surface, light, False, [(22, 9), (27, 6), (28, 8), (25, 11)], 2)
+        pygame.draw.circle(surface, main, (15, 18), 3)
+        pygame.draw.circle(surface, light, (15, 18), 1)
+        return
+    if profile == "hammer":
+        outline_line(surface, (112, 70, 43), (6, 27), (21, 10), 4)
+        pygame.draw.polygon(surface, (24, 23, 27), [(16, 5), (27, 5), (30, 10), (24, 15), (14, 12)])
+        pygame.draw.polygon(surface, dark, [(17, 7), (26, 7), (27, 10), (23, 13), (16, 11)])
+        pygame.draw.line(surface, light, (18, 7), (26, 8), 2)
+        pygame.draw.circle(surface, main, (24, 10), 2)
+        return
+    if profile == "khopesh":
+        pygame.draw.line(surface, (25, 23, 27), (6, 20), (14, 27), 5)
+        pygame.draw.line(surface, main, (7, 20), (14, 26), 2)
+        pygame.draw.lines(surface, (25, 23, 27), False, [(9, 23), (17, 16), (20, 8), (28, 4), (27, 11), (23, 15)], 7)
+        pygame.draw.lines(surface, light, False, [(10, 22), (18, 15), (21, 8), (27, 5), (26, 10), (22, 14)], 3)
+        return
+    if profile == "rapier":
+        pygame.draw.circle(surface, main, (10, 22), 5, 2)
+        outline_line(surface, light, (9, 22), (28, 4), 2)
+        pygame.draw.polygon(surface, dark, [(27, 3), (30, 2), (29, 6)])
+        pygame.draw.circle(surface, light, (11, 21), 1)
+        return
+    if profile == "axe":
+        outline_line(surface, (112, 70, 43), (6, 28), (22, 8), 4)
+        pygame.draw.polygon(surface, (24, 23, 28), [(17, 5), (25, 3), (30, 7), (26, 16), (20, 12), (15, 13)])
+        pygame.draw.polygon(surface, dark, [(19, 6), (25, 5), (28, 7), (25, 13), (21, 11), (17, 11)])
+        pygame.draw.line(surface, light, (20, 6), (27, 7), 2)
+        pygame.draw.rect(surface, main, (21, 8, 3, 3))
+        return
     if profile == "pike":
         outline_line(surface, (117, 79, 48), (6, 27), (24, 8), 3)
         pygame.draw.polygon(surface, (24, 23, 27), [(22, 9), (28, 3), (26, 12)])
@@ -119,8 +193,22 @@ def shield_icon(surface, template_id, seed, palette):
         pygame.draw.line(surface, light, (16, 5), (16, 27), 2)
         pygame.draw.line(surface, dark, (7, 16), (25, 16), 2)
         return
+    if template_id == "gravewood_targe":
+        pygame.draw.circle(surface, (24, 23, 27), (16, 16), 14)
+        pygame.draw.circle(surface, (81, 55, 39), (16, 16), 12)
+        pygame.draw.circle(surface, main, (16, 16), 11, 2)
+        for angle in range(0, 360, 60):
+            end = (round(16 + math.cos(math.radians(angle)) * 10), round(16 + math.sin(math.radians(angle)) * 10))
+            pygame.draw.line(surface, light, (16, 16), end, 2)
+        pygame.draw.circle(surface, dark, (16, 16), 4)
+        pygame.draw.circle(surface, light, (15, 15), 1)
+        return
     if template_id == "frost_mirror":
         points = [(16, 2), (28, 13), (23, 26), (16, 30), (9, 26), (4, 13)]
+    elif template_id == "mothwing_ward":
+        points = [(16, 3), (27, 7), (24, 15), (29, 22), (18, 29), (16, 24), (14, 29), (3, 22), (8, 15), (5, 7)]
+    elif template_id == "dragonbone_pavise":
+        points = [(9, 2), (23, 2), (28, 9), (25, 27), (16, 31), (7, 27), (4, 9)]
     elif template_id in {"runic_bastion", "kingstone_guard", "last_gate"}:
         points = [(7, 4), (25, 4), (27, 23), (16, 30), (5, 23)]
     else:
@@ -141,6 +229,15 @@ def shield_icon(surface, template_id, seed, palette):
         pygame.draw.circle(surface, light, (16, 15), 6, 2)
         pygame.draw.line(surface, light, (10, 15), (22, 15), 1)
         pygame.draw.line(surface, light, (16, 9), (16, 21), 1)
+    elif template_id == "mothwing_ward":
+        pygame.draw.polygon(surface, main, [(16, 7), (23, 11), (18, 17), (24, 22), (16, 26), (8, 22), (14, 17), (9, 11)])
+        pygame.draw.circle(surface, light, (16, 16), 3)
+        pygame.draw.circle(surface, (30, 25, 35), (16, 16), 1)
+    elif template_id == "dragonbone_pavise":
+        pygame.draw.line(surface, light, (10, 6), (22, 25), 3)
+        pygame.draw.line(surface, light, (22, 6), (10, 25), 3)
+        pygame.draw.circle(surface, main, (16, 15), 4)
+        pygame.draw.circle(surface, dark, (16, 15), 2)
     elif seed % 4 == 0:
         pygame.draw.line(surface, light, (16, 7), (16, 24), 2)
         pygame.draw.line(surface, main, (9, 14), (23, 14), 2)
@@ -175,6 +272,37 @@ def ring_icon(surface, seed, palette):
 def accessory_icon(surface, template_id, seed, palette):
     """Give wearable stones and neck pieces silhouettes distinct from rings."""
     main, dark, light = palette
+    if template_id == "pilgrim_bell":
+        pygame.draw.arc(surface, dark, (6, 0, 20, 19), .1, math.pi - .1, 3)
+        pygame.draw.polygon(surface, (25, 23, 27), [(11, 10), (21, 10), (25, 25), (7, 25)])
+        pygame.draw.polygon(surface, main, [(12, 12), (20, 12), (22, 23), (10, 23)])
+        pygame.draw.line(surface, light, (13, 13), (11, 21), 2)
+        pygame.draw.circle(surface, dark, (16, 26), 3)
+        pygame.draw.circle(surface, light, (16, 25), 1)
+        return
+    if template_id == "ashglass_charm":
+        pygame.draw.lines(surface, dark, False, [(7, 4), (13, 11), (16, 28), (19, 11), (25, 4)], 3)
+        pygame.draw.circle(surface, (25, 23, 28), (16, 17), 9)
+        pygame.draw.circle(surface, dark, (16, 17), 7)
+        pygame.draw.polygon(surface, main, [(16, 9), (21, 17), (16, 24), (11, 17)])
+        pygame.draw.polygon(surface, light, [(16, 12), (18, 17), (16, 20), (14, 17)])
+        return
+    if template_id == "witchglass_bead":
+        pygame.draw.arc(surface, dark, (4, 0, 24, 23), .1, math.pi - .1, 3)
+        for x, y, radius in ((9, 13, 3), (16, 11, 4), (23, 13, 3), (16, 21, 7)):
+            pygame.draw.circle(surface, (25, 23, 29), (x, y), radius + 2)
+            pygame.draw.circle(surface, main, (x, y), radius)
+        pygame.draw.ellipse(surface, light, (12, 18, 8, 5))
+        pygame.draw.circle(surface, dark, (16, 20), 2)
+        return
+    if template_id == "oathstone_necklace":
+        pygame.draw.arc(surface, dark, (3, 0, 26, 25), .05, math.pi - .05, 4)
+        pygame.draw.arc(surface, main, (4, 1, 24, 23), .05, math.pi - .05, 1)
+        for x, y in ((8, 14), (12, 18), (16, 20), (20, 18), (24, 14)):
+            pygame.draw.circle(surface, (24, 23, 27), (x, y), 4)
+            pygame.draw.circle(surface, dark, (x, y), 2)
+            pygame.draw.rect(surface, light, (x - 1, y - 1, 1, 1))
+        return
     if template_id == "graveglass_pendant":
         pygame.draw.arc(surface, (30, 28, 30), (5, 1, 22, 23), 0.08, math.pi - .08, 4)
         pygame.draw.arc(surface, main, (6, 2, 20, 21), .08, math.pi - .08, 1)
@@ -363,27 +491,137 @@ def refine_item_icon(low, palette, kind, seed):
     return refined
 
 
+WEAPON_SOURCE_MAP = {
+    "wayfarer_blade": "sword1.png",
+    "rusted_falchion": "sword2.png",
+    "bone_cleaver": "sword5.png",
+    "grave_hook": "scythe2.png",
+    "emberbrand": "sword4.png",
+    "warden_pike": "polearm1.png",
+    "rimefang": "dagger5.png",
+    "stormneedle": "spear1.png",
+    "venomthorn": "dagger3.png",
+    "lantern_sabre": "sword3.png",
+    "astral_edge": "sword5.png",
+    "sunken_king_blade": "sword4.png",
+    "voidglass_sabre": "sword2.png",
+    "crownless_oath": "sword1.png",
+    "pilgrim_crook": "staff2.png",
+    "slag_hammer": "hammer2.png",
+    "moonlit_khopesh": "scythe1.png",
+    "basilisk_needle": "spear2.png",
+    "sovereign_axe": "axe4.png",
+}
+
+
+def tint_external_icon(source, palette, kind):
+    """Bring public-domain item silhouettes into Bonebound's material palette."""
+    icon = pygame.image.load(source)
+    if icon.get_size() != (32, 32):
+        icon = pygame.transform.scale(icon, (32, 32))
+    icon = icon.copy()
+    main, dark, light = palette
+
+    def blend(left, right, amount):
+        return tuple(round(left[index] + (right[index] - left[index]) * amount) for index in range(3))
+
+    for y in range(32):
+        for x in range(32):
+            color = icon.get_at((x, y))
+            if color.a < 16:
+                continue
+            rgb = color[:3]
+            brightest, dimmest = max(rgb), min(rgb)
+            if brightest < 44:
+                # Keep the author's crisp outline intact.
+                continue
+            target = dark if brightest < 104 else light if brightest > 205 else main
+            saturation = brightest - dimmest
+            amount = .72 if saturation > 28 else (.48 if kind in {"weapon", "shield"} else .58)
+            icon.set_at((x, y), (*blend(rgb, target, amount), color.a))
+    return icon
+
+
+def external_item_icon(template_id, kind, seed, palette):
+    if kind not in EXTERNAL_ITEM_SOURCES:
+        return None
+    if kind == "weapon":
+        filename = WEAPON_SOURCE_MAP.get(template_id, EXTERNAL_ITEM_SOURCES[kind][seed % len(EXTERNAL_ITEM_SOURCES[kind])])
+        root = ARSENAL_ROOT
+    elif kind == "shield":
+        filename = EXTERNAL_ITEM_SOURCES[kind][seed % len(EXTERNAL_ITEM_SOURCES[kind])]
+        root = SHIELD_SOURCE_ROOT
+    elif kind == "ring":
+        choices = EXTERNAL_ITEM_SOURCES[kind]
+        accessory_names = {"graveglass_pendant", "cinder_locket", "tempest_talisman", "watcher_stone",
+                           "sovereign_reliquary", "pilgrim_bell", "ashglass_charm", "witchglass_bead",
+                           "oathstone_necklace"}
+        # Named relic silhouettes communicate their mechanic at a glance; keep
+        # their bespoke Bonebound drawing while ordinary bands use CC0 bases.
+        if template_id in accessory_names:
+            return None
+        pool = choices[:10]
+        filename = pool[seed % len(pool)]
+        root = JEWELRY_SOURCE_ROOT
+    else:
+        filename = EXTERNAL_ITEM_SOURCES[kind][seed % len(EXTERNAL_ITEM_SOURCES[kind])]
+        root = POTION_SOURCE_ROOT
+    source = root / filename
+    if not source.exists():
+        return None
+    return tint_external_icon(source, palette, kind)
+
+
+def add_bonebound_item_marks(surface, template_id, kind, seed, palette):
+    """Make licensed base art read as one authored set without hiding its silhouette."""
+    main, dark, light = palette
+    if kind == "weapon":
+        x = 14 + seed % 5
+        y = 14 - seed % 4
+        pygame.draw.rect(surface, dark, (x - 1, y - 1, 3, 3))
+        pygame.draw.rect(surface, light, (x, y, 1, 1))
+    elif kind == "shield":
+        pygame.draw.circle(surface, dark, (16, 16), 5, 1)
+        pygame.draw.line(surface, light, (16, 12), (16, 20), 1)
+        pygame.draw.line(surface, main, (12, 16), (20, 16), 1)
+    elif kind == "ring":
+        pygame.draw.rect(surface, light, (16 + seed % 3 - 1, 8 + seed % 4, 2, 2))
+    elif kind == "potion":
+        symbol = seed % 3
+        if symbol == 0:
+            pygame.draw.line(surface, light, (14, 18), (18, 18), 1)
+            pygame.draw.line(surface, light, (16, 16), (16, 20), 1)
+        elif symbol == 1:
+            pygame.draw.polygon(surface, light, [(16, 15), (19, 19), (16, 21), (13, 19)])
+        else:
+            pygame.draw.circle(surface, light, (16, 18), 2, 1)
+
+
 def build_items():
     from content import ITEM_TEMPLATES
 
     ITEM_ROOT.mkdir(parents=True, exist_ok=True)
     for template_id, template in ITEM_TEMPLATES.items():
-        surface = pygame.Surface((32, 32), pygame.SRCALPHA)
         seed = seed_for(template_id)
         palette = POTION_PALETTES.get(template_id, ELEMENT_PALETTES[template["element"].value])
         kind = template["kind"].value
-        if kind == "weapon":
-            weapon_icon(surface, template_id, seed, palette)
-        elif kind == "shield":
-            shield_icon(surface, template_id, seed, palette)
-        elif kind == "ring":
-            accessory_icon(surface, template_id, seed, palette)
-        elif kind == "potion":
-            potion_icon(surface, template_id, seed, palette)
-        elif kind == "essence":
-            essence_icon(surface, seed, palette)
+        surface = external_item_icon(template_id, kind, seed, palette)
+        if surface is None:
+            surface = pygame.Surface((32, 32), pygame.SRCALPHA)
+            if kind == "weapon":
+                weapon_icon(surface, template_id, seed, palette)
+            elif kind == "shield":
+                shield_icon(surface, template_id, seed, palette)
+            elif kind == "ring":
+                accessory_icon(surface, template_id, seed, palette)
+            elif kind == "potion":
+                potion_icon(surface, template_id, seed, palette)
+            elif kind == "essence":
+                essence_icon(surface, seed, palette)
+            else:
+                material_icon(surface, template_id, seed, palette)
         else:
-            material_icon(surface, template_id, seed, palette)
+            add_bonebound_item_marks(surface, template_id, kind, seed, palette)
         if seed % 4 == 0:
             pygame.draw.rect(surface, palette[2], (27, 4, 2, 2))
             pygame.draw.rect(surface, palette[2], (28, 3, 1, 4))
@@ -749,16 +987,197 @@ def refine_hero_frame(low, state):
     return refined
 
 
+HERO_SOURCE_LAYOUTS = {
+    "idle": tuple(range(0, 8)),
+    "run": tuple(range(8, 18)),
+    "attack": tuple(range(18, 24)),
+    "critical": tuple(range(30, 37)),
+    "hurt": tuple(range(45, 48)),
+    "guard": tuple(range(66, 71)),
+    "victory": tuple(range(58, 66)),
+    "defeat": tuple(range(48, 58)),
+}
+
+
+def _load_pyxel_layers(source):
+    with zipfile.ZipFile(source) as archive:
+        document = json.loads(archive.read("docData.json"))
+        layers = {
+            index: pygame.image.load(io.BytesIO(archive.read(f"layer{index}.png")), f"layer{index}.png")
+            for index in range(document["canvas"]["numLayers"])
+        }
+    return document, layers
+
+
+def _source_cell(layer, index, width=100, height=55):
+    return layer.subsurface(((index % 10) * width, (index // 10) * height, width, height)).copy()
+
+
+def _recolor_mystic_wayfarer(frame):
+    """Turn Sven's human knight into Bonebound's bone-masked teal wanderer."""
+    source = frame.copy()
+    bone_colors = []
+    for y in range(frame.get_height()):
+        for x in range(frame.get_width()):
+            color = source.get_at((x, y))
+            if color.a < 16:
+                continue
+            r, g, b = color[:3]
+            replacement = None
+            if b > r * 1.20 and b > g * 1.06:
+                brightness = max(r, g, b)
+                replacement = (30, 69, 68) if brightness < 110 else (47, 127, 112) if brightness < 205 else (119, 201, 174)
+            elif r > 105 and r > g * 1.42 and r > b * 1.22:
+                brightness = max(r, g, b)
+                replacement = (67, 36, 31) if brightness < 125 else (128, 64, 38) if brightness < 205 else (198, 113, 55)
+            elif y < 29 and r > 170 and g > 110 and b > 70 and r > b * 1.10:
+                brightness = r + g + b
+                replacement = (143, 132, 111) if brightness < 430 else (222, 215, 185)
+                bone_colors.append((x, y))
+            if replacement:
+                frame.set_at((x, y), (*replacement, color.a))
+
+    # A carved brow, independent eye socket and green grave-light make the
+    # face unmistakably non-human even at the native source resolution.
+    if bone_colors:
+        left = min(x for x, _ in bone_colors)
+        right = max(x for x, _ in bone_colors)
+        top = min(y for _, y in bone_colors)
+        bottom = max(y for _, y in bone_colors)
+        eye_x = right - max(1, (right - left) // 4)
+        eye_y = top + max(2, (bottom - top) // 2)
+        pygame.draw.rect(frame, (28, 27, 29), (eye_x - 1, eye_y, 3, 2))
+        pygame.draw.rect(frame, (82, 224, 164), (eye_x, eye_y, 1, 1))
+        rune_x = (left + right) // 2
+        pygame.draw.line(frame, (63, 167, 126), (rune_x, top + 1), (rune_x, max(top + 1, eye_y - 1)), 1)
+        if bottom - top > 5:
+            pygame.draw.line(frame, (91, 64, 51), (left + 1, eye_y + 2), (rune_x, bottom), 1)
+    return frame
+
+
+def _weapon_source_pose(frontarm, index):
+    cell = _source_cell(frontarm, index)
+    guard = []
+    metal = []
+    for y in range(cell.get_height()):
+        for x in range(cell.get_width()):
+            r, g, b, alpha = cell.get_at((x, y))
+            if alpha < 16:
+                continue
+            if r > 180 and g > 125 and b < 125:
+                guard.append(pygame.Vector2(x, y))
+            if b > 125 and abs(r - g) < 85 and b >= g:
+                metal.append(pygame.Vector2(x, y))
+    if not guard:
+        return pygame.Vector2(50, 28), pygame.Vector2(62, 18)
+    grip = sum(guard, pygame.Vector2()) / len(guard)
+    candidates = [point for point in metal if point.distance_squared_to(grip) > 18]
+    tip = max(candidates or metal or [grip + pygame.Vector2(-12, 8)], key=lambda point: point.distance_squared_to(grip))
+    return grip, tip
+
+
+def _shield_source_center(shield, index):
+    cell = _source_cell(shield, index)
+    bounds = cell.get_bounding_rect(min_alpha=8)
+    if not bounds.width:
+        return pygame.Vector2(62, 27)
+    return pygame.Vector2(bounds.center)
+
+
+def _remove_source_weapon(frame, frontarm, index):
+    """Erase the source blade while preserving the animated body underneath."""
+    grip, tip = _weapon_source_pose(frontarm, index)
+    blade = tip - grip
+    if blade.length_squared() < 1:
+        return frame
+    length = blade.length()
+    direction = blade / length
+    normal = pygame.Vector2(-direction.y, direction.x)
+    for y in range(frame.get_height()):
+        for x in range(frame.get_width()):
+            color = frame.get_at((x, y))
+            if color.a < 16:
+                continue
+            relative = pygame.Vector2(x, y) - grip
+            projection = relative.dot(direction)
+            distance = abs(relative.dot(normal))
+            r, g, b = color[:3]
+            pale_weapon_pixel = (b > 115 and abs(r - g) < 90) or (r > 175 and g > 120 and b < 130)
+            source_forward_half = x <= grip.x + 4
+            if (-2.5 <= projection <= length + 2.5 and distance <= 3.25) or (source_forward_half and pale_weapon_pixel):
+                frame.set_at((x, y), (0, 0, 0, 0))
+    return frame
+
+
 def build_hero():
+    """Build an equipment-free hero from the licensed layered animation source."""
     HERO_ROOT.mkdir(parents=True, exist_ok=True)
-    layouts = {"idle": 6, "run": 8, "attack": 8, "critical": 10, "hurt": 4, "guard": 5, "victory": 6, "defeat": 8}
-    for state, count in layouts.items():
-        sheet = pygame.Surface((96 * count, 96), pygame.SRCALPHA)
-        for frame in range(count):
-            low = hero_frame(state, frame, count)
-            detailed = refine_hero_frame(low, state)
-            sheet.blit(detailed, (frame * 96, 0))
+    document, layers = _load_pyxel_layers(SVEN_HERO_SOURCE)
+    assert document["canvas"]["tileWidth"] == 100 and document["canvas"]["tileHeight"] == 55
+
+    raw_frames = {}
+    for state, source_indices in HERO_SOURCE_LAYOUTS.items():
+        state_frames = []
+        for source_index in source_indices:
+            frame = pygame.Surface((100, 55), pygame.SRCALPHA)
+            # Backside, body and scarf contain no baked equipment. The source
+            # alternates weapon ordering between poses, so strip its blade and
+            # consult the original weapon/shield layers only for grip metadata.
+            for layer_index in (5, 4, 1):
+                frame.blit(_source_cell(layers[layer_index], source_index), (0, 0))
+            frame = _remove_source_weapon(frame, layers[2], source_index)
+            frame = _recolor_mystic_wayfarer(frame)
+            state_frames.append(pygame.transform.flip(frame, True, False))
+        raw_frames[state] = state_frames
+
+    bounds = [frame.get_bounding_rect(min_alpha=8) for frames in raw_frames.values() for frame in frames]
+    min_x = min(rect.left for rect in bounds if rect.width)
+    max_x = max(rect.right for rect in bounds if rect.width)
+    min_y = min(rect.top for rect in bounds if rect.height)
+    max_y = max(rect.bottom for rect in bounds if rect.height)
+    scale = min(2.0, 90 / max(1, max_x - min_x), 89 / max(1, max_y - min_y))
+    offset_x = 3 + (90 - (max_x - min_x) * scale) / 2 - min_x * scale
+    offset_y = 92 - max_y * scale
+
+    equipment_points = {"source": "Sven Hero Knight", "states": {}}
+    for state, source_indices in HERO_SOURCE_LAYOUTS.items():
+        frames = raw_frames[state]
+        sheet = pygame.Surface((96 * len(frames), 96), pygame.SRCALPHA)
+        poses = []
+        for frame_number, (frame, source_index) in enumerate(zip(frames, source_indices)):
+            scaled = pygame.transform.scale(frame, (round(100 * scale), round(55 * scale)))
+            sheet.blit(scaled, (frame_number * 96 + round(offset_x), round(offset_y)))
+
+            source_grip, source_tip = _weapon_source_pose(layers[2], source_index)
+            # The game faces right, so mirror source points exactly like art.
+            grip = pygame.Vector2(99 - source_grip.x, source_grip.y)
+            tip = pygame.Vector2(99 - source_tip.x, source_tip.y)
+            blade = tip - grip
+            if blade.length_squared() < 1:
+                blade = pygame.Vector2(10, -10)
+            blade = blade.normalize()
+            elbow = grip - blade * 8
+            shield_center = _shield_source_center(layers[3], source_index)
+            shield_center.x = 99 - shield_center.x
+
+            def project(point):
+                return [round(point.x * scale + offset_x, 2), round(point.y * scale + offset_y, 2)]
+
+            desired_angle = math.degrees(math.atan2(-(tip.y - grip.y), tip.x - grip.x))
+            weapon_angle = (desired_angle - 45 + 180) % 360 - 180
+            poses.append({
+                "weapon_grip": project(grip),
+                "weapon_elbow": project(elbow),
+                "weapon_angle": round(weapon_angle, 2),
+                "shield_center": project(shield_center),
+            })
         pygame.image.save(sheet, HERO_ROOT / f"{state}.png")
+        equipment_points["states"][state] = poses
+
+    (HERO_ROOT / "equipment_points.json").write_text(
+        json.dumps(equipment_points, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def dust_rat_frame(state, frame, count):

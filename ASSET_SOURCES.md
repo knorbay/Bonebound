@@ -8,9 +8,45 @@ Source: Created inside the Bonebound project
 
 License: Project-owned original work
 
-Used files: 69 item icons; the unarmored Wayfarer idle, run, attack, critical, hurt, guard, victory and defeat sheets; and the higher-resolution Dust Rat idle, run, attack and defeat sheets.
+Used files: named relic, essence and material icon overlays; Bonebound palette/rune transformations; and the higher-resolution Dust Rat idle, run, attack and defeat sheets.
 
-The set was drawn as deterministic pixel art without generative image tools. The reproducible source is `tools/build_pixel_assets.py`.
+The deterministic transformations and original supplements are reproducible from `tools/build_pixel_assets.py`.
+
+## Hero Knight
+
+Source: https://sventhole.itch.io/hero-knight
+
+Author: Sven Thole
+
+License: The author's Hero Knight asset terms permit use in commercial and non-commercial games and prohibit reselling the pack itself as an asset.
+
+Used file: `assets/third_party/sven_hero_knight/HeroKnight.pyxel`
+
+Bonebound composes the source's separate body/scarf layers, removes its baked equipment, mirrors and recolors the result as the bone-masked Wayfarer, and exports native idle, run, attack, critical, hurt, guard, victory and defeat sheets. The source weapon and shield layers are used only to derive per-frame grip coordinates for the player's actual equipped item artwork.
+
+## Idylwild's Arsenal
+
+Source: https://opengameart.org/content/idylwilds-arsenal
+
+Author: Idylwild
+
+License: Creative Commons CC0
+
+Used files: selected 32x32 weapon PNGs under `assets/third_party/idylwild_arsenal/`, recolored and marked for Bonebound's weapon icons.
+
+## CC0 Shield, Jewelry and Potion Icons
+
+Sources:
+
+- https://opengameart.org/content/cc0-shield-icons
+- https://opengameart.org/content/cc0-jewelry-icons
+- https://opengameart.org/content/cc0-potion-icons
+
+Collection author: AntumDeluge; selected pixel originals by 7Soul1 / Henrique Lazarini
+
+License: Creative Commons CC0
+
+Used files: selected 32x32 PNGs under `assets/third_party/7soul_shields/`, `assets/third_party/7soul_jewelry/` and `assets/third_party/7soul_potions/`, recolored and augmented with Bonebound-specific marks.
 
 ## UI Pack - Adventure
 
