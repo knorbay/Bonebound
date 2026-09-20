@@ -81,7 +81,16 @@ class CharacterSprites:
         self._load_cc0_enemies(root / "enemies_cc0")
         self._enhance_narrow_humanoids()
         self._load_original_enemies(root / "enemies_original")
+        self._load_expansion_enemies(root / "enemies_expansion")
         self._normalize_enemy_canvases()
+
+    def _load_expansion_enemies(self, root):
+        from expansion import SPRITES
+        for enemy_id in SPRITES:
+            idle = [pygame.transform.flip(frame, True, False) for frame in self.load_folder(root / enemy_id / "idle")]
+            run = [pygame.transform.flip(frame, True, False) for frame in self.load_folder(root / enemy_id / "run")] or idle
+            for state in ("idle", "run", "attack", "critical", "guard", "defeat"):
+                self.enemy_frames[(enemy_id, state)] = run if state in ("run", "attack", "critical") else idle
 
     def _load_cc0_enemies(self, root):
         """Load the public-domain bestiary as per-enemy animation sheets."""

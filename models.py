@@ -1,3 +1,4 @@
+from campaign_config import TOTAL_STAGES, ENDLESS_UNLOCK_STAGE
 import uuid
 import random
 from dataclasses import dataclass, field
@@ -193,6 +194,10 @@ class Stage:
 
 
 class Hero:
+    @property
+    def endless_unlocked(self):
+        return self.campaign_complete or ENDLESS_UNLOCK_STAGE in self.cleared_stages or self.best_endless > 0
+
     BALANCE_VERSION = 3
 
     def __init__(self):
@@ -454,9 +459,9 @@ class Hero:
             hero.boost_uid = None
         hero.gold = int(data.get("gold", 0))
         hero.bone_dust = int(data.get("bone_dust", 0))
-        hero.unlocked_stage = max(1, min(25, int(data.get("unlocked_stage", 1))))
-        hero.cleared_stages = {int(value) for value in data.get("cleared_stages", []) if 1 <= int(value) <= 25}
-        hero.best_turns = {int(key): int(value) for key, value in data.get("best_turns", {}).items() if 1 <= int(key) <= 25}
+        hero.unlocked_stage = max(1, min(TOTAL_STAGES, int(data.get("unlocked_stage", 1))))
+        hero.cleared_stages = {int(value) for value in data.get("cleared_stages", []) if 1 <= int(value) <= TOTAL_STAGES}
+        hero.best_turns = {int(key): int(value) for key, value in data.get("best_turns", {}).items() if 1 <= int(key) <= TOTAL_STAGES}
         hero.total_wins = int(data.get("total_wins", 0))
         hero.total_losses = int(data.get("total_losses", 0))
         hero.total_enemies = int(data.get("total_enemies", 0))
@@ -470,7 +475,7 @@ class Hero:
         hero.pending_routes = [str(value) for value in data.get("pending_routes", [])][:3]
         hero.pending_stage = int(data.get("pending_stage", 0))
         hero.training_count = int(data.get("training_count", 0))
-        hero.campaign_complete = bool(data.get("campaign_complete", 25 in hero.cleared_stages))
+        hero.campaign_complete = bool(data.get("campaign_complete", TOTAL_STAGES in hero.cleared_stages))
         hero.ending_seen = bool(data.get("ending_seen", False))
         hero.endless_depth = max(0, int(data.get("endless_depth", 0)))
         hero.best_endless = max(hero.endless_depth, int(data.get("best_endless", 0)))

@@ -49,7 +49,13 @@ ITEM_COLORS = {
 
 class UI:
     def __init__(self, audio=None):
+        from dungeon_art import DungeonArt
+        self.dungeon = DungeonArt()
         self.audio = audio
+        self.hover_item = None
+        self.hover_uid = None
+        self.hover_since = 0.0
+        self.tooltip_scroll = 0
         self.fonts = {
             "tiny": pygame.font.SysFont("avenir next,arial", 13, bold=True),
             "small": pygame.font.SysFont("avenir next,arial", 16),
@@ -66,7 +72,7 @@ class UI:
                 self.images[name] = pygame.image.load(root / f"{name}.svg").convert_alpha()
             except (FileNotFoundError, OSError, pygame.error):
                 pass
-        for name in ("bonebound_logo_v2", "bonebound_logo_v3", "battle_backdrop_v2"):
+        for name in ("bonebound_logo_v2", "bonebound_logo_v3", "battle_backdrop_v2", "world_map_v3"):
             try:
                 self.images[name] = pygame.image.load(root / f"{name}.png").convert_alpha()
             except (FileNotFoundError, OSError, pygame.error):
@@ -137,15 +143,6 @@ class UI:
         else:
             size = (target, target)
         icon = pygame.transform.scale(source, size)
-        if item.element != Element.NEUTRAL:
-            color = ELEMENT_COLORS[item.element]
-            multiplier = self.blend((255, 255, 255), color, .30)
-            icon.fill((*multiplier, 255), special_flags=pygame.BLEND_RGBA_MULT)
-            # Bound elements remain readable even on naturally dark silhouettes.
-            glow = icon.copy()
-            glow.fill((*self.blend(color, (255, 255, 255), .35), 0), special_flags=pygame.BLEND_RGBA_ADD)
-            glow.set_alpha(42)
-            icon.blit(glow, (0, 0))
         if item.upgrade:
             sparkle = self.blend(ELEMENT_COLORS.get(item.element, COLORS["gold"]), (255, 255, 255), .52)
             for index in range(min(3, 1 + item.upgrade // 2)):
@@ -309,8 +306,8 @@ class UI:
             self.audio.play("click")
         return activated
 
-    def bar(self, surface, rect, value, maximum, color, label="", show_numbers=True):
-        ratio = max(0.0, min(1.0, value / max(1, maximum)))
+    def bar(self, surface, rect, value, maximum, color, label="", show_numbers=True, fill_value=None):
+        ratio = max(0.0, min(1.0, (value if fill_value is None else fill_value) / max(1, maximum)))
         pygame.draw.rect(surface, (7, 11, 17), rect.inflate(4, 4), border_radius=6)
         pygame.draw.rect(surface, (26, 32, 41), rect, border_radius=4)
         fill = rect.copy()
@@ -334,13 +331,7 @@ class UI:
         color = self.item_color(item)
         center = rect.center
         size = min(rect.width, rect.height)
-        glow = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-        pygame.draw.circle(glow, (*color, 52 if selected else 28), (rect.width // 2, rect.height // 2), max(8, size // 2 - 3))
-        if item.effects.get("fusion_visual"):
-            pulse = self.blend(color, COLORS["gold"], .45)
-            pygame.draw.circle(glow, (*pulse, 78 if selected else 48), (rect.width // 2, rect.height // 2), max(7, size // 2 - 6), 2)
-        surface.blit(glow, rect)
-        icon = self.item_sprite(item, max(12, round(size * .82)))
+        icon = self.item_sprite(item, max(12, round(size * .76)), crop=True)
         if icon:
             shadow = icon.copy()
             shadow.fill((5, 6, 8, 115), special_flags=pygame.BLEND_RGBA_MULT)
@@ -390,6 +381,8 @@ class UI:
     def item_card(self, surface, rect, item, mouse, clicked, selected=False, compact=False):
         color = self.item_color(item)
         hovered = rect.collidepoint(mouse)
+        if hovered:
+            self.hover_item = item
         fill = (52, 46, 40) if hovered else (32, 30, 30)
         border = COLORS["gold"] if selected else self.blend(color, COLORS["border"], .38)
         self.ornamented_panel(surface, rect, fill, border, 8, 2 if selected or hovered else 1)
@@ -412,6 +405,8 @@ class UI:
 
     def item_slot(self, surface, rect, item, mouse, clicked, selected=False, label=""):
         hovered = rect.collidepoint(mouse)
+        if hovered and item:
+            self.hover_item = item
         if not item:
             self.empty_card(surface, rect, label or "EMPTY", mouse, clicked, selected)
             activated = hovered and clicked
@@ -490,7 +485,7 @@ class UI:
         overlay = pygame.Surface(box.size, pygame.SRCALPHA)
         pygame.draw.rect(overlay, (14, 12, 12, int(238 * fade)), overlay.get_rect(), border_radius=9)
         pygame.draw.rect(overlay, (*COLORS["gold"], int(190 * fade)), overlay.get_rect(), 1, border_radius=9)
-        image.set_alpha(int(255 * fade))
+        image.fill((255, 255, 255, int(255 * fade)), special_flags=pygame.BLEND_RGBA_MULT)
         surface.blit(overlay, box)
         surface.blit(image, image.get_rect(center=box.center))
 
@@ -522,23 +517,9 @@ class UI:
         surface.set_clip(rect)
         color = ELEMENT_COLORS[element]
         if rect.width / max(1, rect.height) > 1.45:
-            backdrop = self.asset("battle_backdrop_v2", rect.size)
-            if backdrop:
-                surface.blit(backdrop, rect)
-                tint = pygame.Surface(rect.size, pygame.SRCALPHA)
-                tint.fill((*color, 18 if element == Element.NEUTRAL else 29))
-                surface.blit(tint, rect)
-                # One quiet element cue and a crisp floor anchor; combatants stay dominant.
-                for index in range(5):
-                    px = rect.x + 135 + index * 233
-                    py = rect.bottom - 108 - (index % 2) * 9
-                    alpha = 50 + round(22 * math.sin(clock * 2.1 + index))
-                    mote = pygame.Surface((12, 12), pygame.SRCALPHA)
-                    pygame.draw.circle(mote, (*color, max(18, alpha)), (6, 6), 2 + index % 2)
-                    surface.blit(mote, (px, py))
-                pygame.draw.line(surface, self.blend((95, 76, 58), color, .18), (rect.x, rect.bottom - 82), (rect.right, rect.bottom - 82), 3)
-                surface.set_clip(old_clip)
-                return
+            surface.blit(self.dungeon.arena(rect.size, act), rect)
+            surface.set_clip(old_clip)
+            return
         for y in range(rect.y, rect.bottom, 6):
             amount = (y - rect.y) / max(1, rect.height)
             shade = self.blend(self.blend(color, (13, 17, 25), .82), (10, 9, 12), amount)
@@ -569,3 +550,52 @@ class UI:
         pygame.draw.line(surface, (110, 87, 63), (rect.x, rect.bottom - 86), (rect.right, rect.bottom - 86), 4)
         pygame.draw.line(surface, (52, 43, 39), (rect.x, rect.bottom - 80), (rect.right, rect.bottom - 80), 8)
         surface.set_clip(old_clip)
+
+    def draw_item_tooltip(self, surface, mouse, clock):
+        from item_details import mechanics
+        item = self.hover_item
+        uid = item.uid if item else None
+        if uid != self.hover_uid:
+            self.hover_uid, self.hover_since = uid, clock
+            self.tooltip_scroll = 0
+        if not item or clock - self.hover_since < .45:
+            return
+        width = 420
+        lines = []
+        def wrap(text, color):
+            line = ""
+            for word in text.split():
+                trial = (line + " " + word).strip()
+                if self.fonts["tiny"].size(trial)[0] > width - 32 and line:
+                    lines.append((line, color))
+                    line = word
+                else:
+                    line = trial
+            if line:
+                lines.append((line, color))
+        wrap(item.description, COLORS["muted"])
+        lines.append(("", COLORS["muted"]))
+        for value in mechanics(item):
+            wrap(value, COLORS["text"])
+        from content import RECIPES, ITEM_TEMPLATES, ENEMIES, STAGES
+        recipe = next((pair for pair, result in RECIPES.items() if result == item.template_id), None)
+        if recipe:
+            wrap("RECIPE: " + " + ".join(ITEM_TEMPLATES[key]["name"] for key in recipe), COLORS["gold"])
+        acts = sorted({stage.act for stage in STAGES if any(item.template_id in ENEMIES[key].loot for key in stage.enemies)})
+        if acts:
+            wrap("DROPS: Act " + ", ".join(map(str, acts)), COLORS["blue"])
+        line_height = self.fonts["tiny"].get_linesize() + 3
+        visible_count = min(len(lines), (surface.get_height() - 150) // line_height)
+        self.tooltip_scroll = max(0, min(self.tooltip_scroll, len(lines) - visible_count))
+        height = 102 + visible_count * line_height + (22 if visible_count < len(lines) else 0)
+        x = mouse[0] + 22 if mouse[0] + width + 30 < surface.get_width() else mouse[0] - width - 18
+        rect = pygame.Rect(max(8,x), max(8,min(mouse[1]+18, surface.get_height()-height-8)), width, height)
+        self.panel(surface, rect, (12,18,27), self.item_color(item), 8, 2)
+        self.draw_item_icon(surface, pygame.Rect(rect.x+12,rect.y+12,52,52), item)
+        self.fitted_text(surface, item.display_name, pygame.Rect(rect.x+76,rect.y+14,width-90,25), self.item_color(item), "small")
+        self.text(surface, f"TIER {item.tier}  /  {item.category_label.upper()}  /  {item.element.value.upper()}", (rect.x+76,rect.y+42), COLORS["muted"], "tiny")
+        self.fitted_text(surface, item.stat_text(), pygame.Rect(rect.x+16,rect.y+72,width-32,22), COLORS["gold"], "tiny")
+        if visible_count < len(lines):
+            self.text(surface, "SCROLL TO READ MORE", (rect.x+16,rect.bottom-20), COLORS["gold"], "tiny")
+        for i,(line,color) in enumerate(lines[self.tooltip_scroll:self.tooltip_scroll+visible_count]):
+            self.text(surface, line, (rect.x+16,rect.y+100+i*line_height), color, "tiny")

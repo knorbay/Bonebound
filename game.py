@@ -20,7 +20,7 @@ from ui import COLORS, ELEMENT_COLORS, ITEM_COLORS, UI
 
 WIDTH, HEIGHT = 1200, 960
 FPS = 60
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 
 
 def fitted_viewport(window_size):
@@ -70,6 +70,7 @@ class FloatNotice:
     color: tuple
     age: float = 0.0
     duration: float = 1.25
+    target: str = ""
 
     def update(self, dt):
         self.age += dt
@@ -85,6 +86,7 @@ class FxBurst:
     kind: str = "hit"
     age: float = 0.0
     duration: float = .52
+    element: Element = Element.NEUTRAL
 
     def update(self, dt):
         self.age += dt
@@ -109,6 +111,8 @@ class FxBurst:
             py = self.y + math.sin(angle) * distance * .65
             size = max(1, round((5 if self.kind == "critical" else 4) * (1 - progress)))
             pygame.draw.circle(layer, (*self.color, alpha), (round(px), round(py)), size)
+        from presentation import draw_element_impact
+        draw_element_impact(layer, self.x, self.y, self.element, progress, self.kind == "block")
         surface.blit(layer, (0, 0))
 
 
@@ -117,6 +121,7 @@ class Game:
         if simulate:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
             os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+        pygame.mixer.pre_init(44100, -16, 2, 512)
         pygame.init()
         self.simulate = simulate
         flags = pygame.HIDDEN if simulate else pygame.RESIZABLE
@@ -136,10 +141,16 @@ class Game:
         if simulate and save_path is None:
             save_path = Path(tempfile.gettempdir()) / f"bonebound_sim_{os.getpid()}.json"
         self.save_manager = SaveManager(save_path)
+        self.audio.bind_settings(self.save_manager.path.with_name("audio_settings.json"))
+        self.audio_panel = False
+        self.battle_paused = False
         self.screen = Screen.MAIN_MENU
         self.return_screen = Screen.HUB
         self.hero = None
         self.selected_stage = 1
+        self.map_scroll = None
+        self.recipe_page = 0
+        self.map_scroll = None
         self.selected_uid = None
         self.selected_equipment_slot = None
         self.mixer_left = None
@@ -406,6 +417,7 @@ class Game:
         for item in loadout.get("inventory", []):
             self.hero.add_item(item)
         self.selected_stage = 1
+        self.map_scroll = None
         self.selected_uid = None
         self.selected_equipment_slot = None
         self.mixer_left = None
@@ -420,6 +432,7 @@ class Game:
     def load_game(self):
         try:
             self.hero, self.selected_stage = self.save_manager.load()
+            self.map_scroll = None
         except SaveError as exc:
             self.toast(str(exc))
             return
@@ -460,7 +473,7 @@ class Game:
         self.begin_battle(stage)
 
     def start_endless(self, depth=None):
-        if not self.hero or not self.hero.campaign_complete:
+        if not self.hero or not self.hero.endless_unlocked:
             self.toast("The Endless Descent opens after the Hollow Crown falls.")
             return
         depth = max(1, int(depth or self.hero.endless_depth + 1))
@@ -473,6 +486,7 @@ class Game:
         self.battle = CombatEngine(self.hero, stage, random.Random(seed))
         self.battle_processed = False
         self.battle_finish_timer = 0
+        self.battle_paused = False
         self.float_notices.clear()
         self.fx_bursts.clear()
         self.impact_pause = 0.0
@@ -485,7 +499,7 @@ class Game:
         self.mixer_left = None
         self.mixer_right = None
         self.begin_transition(Screen.BATTLE, f"DESCENDING • {stage.name.upper()}")
-        self.audio.play("open")
+        self.audio.play("door")
         self.save()
 
     def finish_victory(self):
@@ -525,65 +539,88 @@ class Game:
         self.battle_finish_timer = 1.25
         self.save()
 
+    def combat_anchor(self, target):
+        bounds = getattr(self, "combat_bounds", {}).get(target)
+        if bounds is None:
+            return (870 if target == "enemy" else 330), 438, 330
+        return bounds.centerx, bounds.centery, max(280, bounds.top - 24)
+
+    def combat_notice(self, text, target, color, duration=1.35):
+        x, _, y = self.combat_anchor(target)
+        # Newest feedback stays closest to the actor; older lines rise together.
+        previous_y = y
+        same_target = [n for n in self.float_notices if n.target == target]
+        for notice in reversed(same_target):
+            notice.y = min(notice.y, previous_y - 34)
+            previous_y = notice.y
+        if len(same_target) >= 5:
+            self.float_notices.remove(same_target[0])
+        self.float_notices.append(FloatNotice(text, x, y, color, duration=duration, target=target))
+
     def process_battle_events(self):
+        damage_types = {"hero_hit", "enemy_hit", "proc", "counter", "thorns"}
         for event in self.battle.drain_events():
-            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns"} and (event.amount or event.blocked):
-                self.audio.play("block" if event.blocked else "critical" if event.critical else "hit")
-            elif event.event_type == "boost":
-                self.audio.play("potion")
-            elif event.event_type in {"victory", "enemy_down"}:
-                self.audio.play("confirm")
-            elif event.event_type == "defeat":
-                self.audio.play("error")
-            elif event.event_type == "boss_phase":
-                self.audio.play("critical")
-                self.shake = .18
-                self.enemy_hit_flash = .28
-                self.float_notices.append(FloatNotice("SECOND PHASE", 870, 418, ELEMENT_COLORS[event.element], 1.15))
-            if event.event_type == "enemy_hit" and event.blocked:
-                self.hero_block_flash = .34
-                self.impact_pause = max(self.impact_pause, .045)
-            if event.event_type == "hero_hit" and event.critical:
-                self.hero_critical_flash = .58
-            if event.event_type in {"hero_hit", "enemy_hit", "boost", "thorns", "proc", "counter", "heal", "revive", "barrier", "chill"}:
-                x = 870 if event.actor == "enemy" else 330
-                if event.event_type == "enemy_hit":
-                    x = 330
-                elif event.event_type == "hero_hit":
-                    x = 870
-                if event.event_type in {"heal", "revive"}:
-                    text = f"+{event.amount}"
-                    color = (81, 222, 130)
-                elif event.event_type == "chill":
-                    text = f"CHILL {event.amount}%"
-                    color = ELEMENT_COLORS[Element.ICE]
-                elif event.event_type == "barrier":
-                    text = f"ABSORB {event.amount}"
-                    color = (130, 205, 245)
-                elif event.blocked:
-                    text = "BLOCK"
-                    color = (130, 205, 245)
-                elif event.event_type == "boost":
-                    text = f"+{event.amount}"
-                    color = (81, 222, 130)
+            kind = event.event_type
+            if kind == "wave":
+                self.float_notices.clear()
+                self.fx_bursts.clear()
+                self.combat_bounds = {}
+            if kind in damage_types and (event.amount or event.blocked):
+                target = "enemy" if event.actor == "hero" else "hero"
+                x, y, _ = self.combat_anchor(target)
+                color = (248, 208, 104) if event.critical else (247, 115, 123) if target == "hero" else (240, 235, 217)
+                if event.blocked:
+                    text, color = "BLOCK", (130, 205, 245)
                 else:
                     text = f"-{event.amount}" + (" CRIT" if event.critical else "")
-                    color = (248, 193, 72) if event.critical else ELEMENT_COLORS[event.element]
-                self.float_notices.append(FloatNotice(text, x, 450, color))
-                if event.amount:
-                    self.shake = .12 if event.critical else .06
-                    self.impact_pause = max(self.impact_pause, .075 if event.critical else .045)
-                    if event.event_type == "enemy_hit" and not event.blocked:
+                    if kind in {"proc", "counter", "thorns"}:
+                        label = ("BLEED" if event.element == Element.NEUTRAL else event.element.value.upper()) if kind == "proc" else kind.upper()
+                        text += " " + label
+                        if event.element != Element.NEUTRAL:
+                            color = ELEMENT_COLORS[event.element]
+                self.combat_notice(text, target, color)
+                self.audio.play("block" if event.blocked else "critical" if event.critical else "hurt" if target == "hero" else "hit")
+                self.fx_bursts.append(FxBurst(x, y, color, "block" if event.blocked else "critical" if event.critical else kind, element=event.element))
+                if event.amount and not event.blocked:
+                    self.shake = max(self.shake, .12 if event.critical else .04)
+                    self.impact_pause = max(self.impact_pause, .075 if event.critical else .035)
+                    if target == "hero":
                         self.hero_hit_flash = .18
-                    elif event.event_type == "hero_hit" and not event.blocked:
+                    else:
                         self.enemy_hit_flash = .16
-            if event.event_type in {"hero_hit", "enemy_hit", "proc", "counter", "thorns"} and event.amount:
-                    burst_y = 438
-                    self.fx_bursts.append(FxBurst(x, burst_y, color, "critical" if event.critical else event.event_type))
-            if event.event_type == "enemy_down":
+                    if event.element != Element.NEUTRAL:
+                        self.audio.play("element_" + event.element.value)
+                if kind == "enemy_hit" and event.blocked:
+                    self.hero_block_flash = .34
+                # The engine already plays the swing before impact. Do not
+                # restart it as a critical animation after damage has landed.
+            elif kind in {"heal", "revive"} and event.amount:
+                self.combat_notice(f"+{event.amount} HP", "hero", (100, 230, 150))
+            elif kind == "boost":
+                self.audio.play("potion")
+                self.combat_notice(f"+{event.amount} HP" if event.amount else "BOOST", "hero", (100, 230, 150))
+            elif kind == "barrier" and event.amount:
+                self.combat_notice(f"ABSORB {event.amount}", "hero", (130, 205, 245))
+            elif kind == "chill":
+                self.combat_notice(f"CHILL {event.amount}%", "enemy", ELEMENT_COLORS[Element.ICE])
+            elif kind == "boost_fade":
+                self.combat_notice("BOOST ENDED", "hero", COLORS["muted"])
+            elif kind == "last_stand":
+                self.combat_notice("LAST STAND", "hero", (248, 208, 104))
+            elif kind == "boss_phase":
+                self.audio.play("boss_phase")
+                self.combat_notice("SECOND PHASE", "enemy", ELEMENT_COLORS[event.element], duration=1.6)
+            elif kind in {"victory", "enemy_down"}:
+                self.audio.play("victory" if kind == "victory" else "enemy_down")
+            elif kind == "defeat":
+                self.audio.play("error")
+            if kind == "enemy_down":
                 self.save()
 
     def update(self, dt):
+        self.audio.update(dt)
+        if self.audio_panel or self.battle_paused:
+            return
         self.time += dt
         self.toast_age += dt
         self.craft_reveal_age += dt
@@ -608,6 +645,8 @@ class Game:
             else:
                 self.battle.update(dt)
             self.process_battle_events()
+            self.health_fill("hero", self.battle.hero_hp, dt)
+            self.health_fill("enemy", self.battle.enemy.hp, dt)
             if self.battle.outcome == BattleOutcome.VICTORY and not self.battle_processed:
                 self.finish_victory()
             elif self.battle.outcome in {BattleOutcome.DEFEAT, BattleOutcome.RETREATED} and not self.battle_processed:
@@ -628,10 +667,44 @@ class Game:
             elif event.type in {pygame.VIDEORESIZE, pygame.WINDOWRESIZED}:
                 self.update_viewport()
                 self.mouse = self.pointer_position(pygame.mouse.get_pos())
+            elif self.audio_panel and event.type in {pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION, pygame.MOUSEWHEEL, pygame.KEYDOWN}:
+                if event.type in {pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION}:
+                    self.mouse = self.pointer_position(event.pos)
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    self.clicked = True
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    self.audio_panel = False
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+                    self.audio.toggle_music()
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_n:
+                    self.audio.toggle_effects()
+            elif self.battle_paused:
+                if event.type in {pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION}:
+                    self.mouse = self.pointer_position(event.pos)
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    self.clicked = True
+                elif event.type == pygame.KEYDOWN and event.key in {pygame.K_ESCAPE, pygame.K_p}:
+                    self.battle_paused = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_p and self.screen == Screen.BATTLE and self.battle and self.battle.active:
+                self.battle_paused = True
+                self.drag_active = False
+                self.drag_candidate = None
             elif self.transition_target is not None:
                 if event.type == pygame.MOUSEMOTION:
                     self.mouse = self.pointer_position(event.pos)
                 continue
+            elif event.type == pygame.KEYDOWN and event.key in {pygame.K_m, pygame.K_n}:
+                if event.key == pygame.K_m:
+                    self.audio.toggle_music()
+                    self.toast("Music " + ("on" if self.audio.music_enabled else "off"))
+                else:
+                    self.audio.toggle_effects()
+                    self.toast("Sound effects " + ("on" if self.audio.effects_enabled else "off"))
+            elif event.type == pygame.MOUSEWHEEL and self.screen == Screen.HUB and pygame.Rect(44,202,727,546).collidepoint(self.mouse):
+                from world_map import scroll_limit
+                self.map_scroll = max(0,min(scroll_limit(),(self.map_scroll or 0)-event.y*64))
+            elif event.type == pygame.MOUSEWHEEL and self.ui.hover_item:
+                self.ui.tooltip_scroll = max(0, self.ui.tooltip_scroll - event.y * 3)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 position = self.pointer_position(event.pos)
                 self.mouse = position
@@ -666,10 +739,9 @@ class Game:
                 elif self.screen == Screen.MAIN_MENU:
                     self.running = False
                 elif self.screen == Screen.BATTLE and self.battle and self.battle.active:
-                    self.battle.retreat()
-                    self.battle_processed = True
-                    self.begin_transition(Screen.HUB, "LEAVING THE ARENA")
-                    self.save()
+                    self.battle_paused = True
+                    self.drag_active = False
+                    self.drag_candidate = None
                 elif self.screen == Screen.RECIPES:
                     self.screen = Screen.MIXER
                 elif self.screen in {Screen.INVENTORY, Screen.MIXER, Screen.CHARACTER}:
@@ -745,7 +817,7 @@ class Game:
         pygame.draw.line(self.screen_surface, COLORS["gold"], (91, 349), (500, 349), 2)
         self.ui.text(self.screen_surface, "DESCENT", (89, 381), COLORS["text"], "large", "midleft")
         self.ui.wrapped(self.screen_surface, "Build a traveler. Break the dead road. Carry every scar and every item deeper.", pygame.Rect(91, 427, 410, 68), COLORS["muted"], "small", 5, 3)
-        features = (("25", "DUNGEONS"), ("12", "BAG SLOTS"), ("∞", "ENDGAME"))
+        features = ((str(len(STAGES)), "DUNGEONS"), ("12", "BAG SLOTS"), ("∞", "ENDGAME"))
         for index, (value, label) in enumerate(features):
             card = pygame.Rect(90 + index * 143, 505, 128, 76)
             self.ui.panel(self.screen_surface, card, (14, 20, 28), (47, 61, 76), 9)
@@ -791,125 +863,50 @@ class Game:
     def draw_hub(self):
         self.ui.draw_world_background(self.screen_surface, self.time)
         self.header("THE DESCENT", "Follow the road downward. Cleared dungeons remain open for another run.")
-        map_rect = pygame.Rect(30, 120, 755, 682)
-        self.ui.ornamented_panel(self.screen_surface, map_rect, (25, 25, 29), COLORS["border"], 13, 2)
-        act_names = ["BONE ORCHARD", "ASH GALLERIES", "FROST RELIQUARY", "STORM OSSUARY", "ECLIPSE VAULT"]
-        act_colors = [(164, 155, 133), (225, 91, 43), (79, 177, 216), (225, 196, 62), (166, 82, 203)]
-        positions = []
-        for row in range(5):
-            band = pygame.Rect(map_rect.x + 12, map_rect.y + 12 + row * 130, map_rect.width - 24, 122)
-            tint = self.ui.blend((25, 25, 29), act_colors[row], .07)
-            pygame.draw.rect(self.screen_surface, tint, band, border_radius=9)
-            pygame.draw.line(self.screen_surface, self.ui.blend(act_colors[row], COLORS["ink"], .60), (band.x + 12, band.bottom), (band.right - 12, band.bottom), 1)
-            self.ui.text(self.screen_surface, f"ACT {row + 1}", (band.x + 15, band.y + 10), act_colors[row], "tiny")
-            self.ui.text(self.screen_surface, act_names[row], (band.x + 72, band.y + 10), COLORS["muted"], "tiny")
-            y = band.y + 77
-            xs = [map_rect.x + 72 + col * 145 for col in range(5)]
-            if row % 2:
-                xs.reverse()
-            for col in range(5):
-                index = row * 5 + col + 1
-                positions.append((xs[col], y))
-        for index in range(24):
-            start = positions[index]
-            end = positions[index + 1]
-            unlocked = index + 2 <= self.hero.unlocked_stage
-            color = (91, 123, 98) if unlocked else (54, 52, 55)
-            pygame.draw.line(self.screen_surface, (9, 9, 11), start, end, 9)
-            pygame.draw.line(self.screen_surface, color, start, end, 4)
-            distance = math.dist(start, end)
-            marks = max(1, round(distance / 30))
-            for mark in range(1, marks):
-                amount = mark / marks
-                x = round(start[0] + (end[0] - start[0]) * amount)
-                y = round(start[1] + (end[1] - start[1]) * amount)
-                pygame.draw.circle(self.screen_surface, self.ui.blend(color, COLORS["ink"], .28), (x, y), 2)
-        for row in range(5):
-            band_y = map_rect.y + 12 + row * 130
-            accent = act_colors[row]
-            for decoration in range(6):
-                x = map_rect.x + 42 + decoration * 124 + (row % 2) * 31
-                y = band_y + 105
-                if row == 0:
-                    pygame.draw.line(self.screen_surface, (64, 60, 54), (x, y), (x, y - 30), 4)
-                    pygame.draw.line(self.screen_surface, (64, 60, 54), (x, y - 20), (x - 10, y - 31), 3)
-                elif row == 1:
-                    pygame.draw.circle(self.screen_surface, self.ui.blend(accent, COLORS["ink"], .42), (x, y - 8), 4 + decoration % 3)
-                elif row == 2:
-                    pygame.draw.polygon(self.screen_surface, self.ui.blend(accent, COLORS["ink"], .55), [(x, y), (x + 7, y - 20), (x + 13, y)])
-                elif row == 3:
-                    pygame.draw.lines(self.screen_surface, self.ui.blend(accent, COLORS["ink"], .50), False, [(x - 8, y - 28), (x + 2, y - 17), (x - 3, y - 7), (x + 9, y)], 2)
-                else:
-                    pygame.draw.rect(self.screen_surface, self.ui.blend(accent, COLORS["ink"], .65), (x - 5, y - 25, 10, 25))
-        for index, (x, y) in enumerate(positions, 1):
-                unlocked = index <= self.hero.unlocked_stage
-                cleared = index in self.hero.cleared_stages
-                selected = index == self.selected_stage
-                act_color = act_colors[(index - 1) // 5]
-                color = (79, 190, 116) if cleared else act_color if unlocked else (63, 59, 61)
-                radius = 28 if index % 5 == 0 else 22
-                pygame.draw.circle(self.screen_surface, (7, 7, 9), (x, y + 5), radius + 7)
-                pygame.draw.circle(self.screen_surface, COLORS["gold"] if selected else (41, 38, 39), (x, y), radius + 5)
-                pygame.draw.circle(self.screen_surface, self.ui.blend(color, COLORS["ink"], .60), (x, y), radius)
-                pygame.draw.circle(self.screen_surface, color, (x, y), radius, 3)
-                if index % 5 == 0:
-                    pygame.draw.polygon(self.screen_surface, color, [(x, y - radius + 4), (x + 8, y - 7), (x + radius - 4, y), (x + 8, y + 7), (x, y + radius - 4), (x - 8, y + 7), (x - radius + 4, y), (x - 8, y - 7)], 2)
-                self.ui.text(self.screen_surface, index if unlocked else "×", (x, y), COLORS["text"] if unlocked else (91, 84, 84), "small", "center", selected)
-                node = pygame.Rect(x - radius - 8, y - radius - 8, (radius + 8) * 2, (radius + 8) * 2)
-                if unlocked and node.collidepoint(self.mouse) and self.clicked:
-                    self.selected_stage = index
-                    self.save()
+        from presentation import REGION_COLORS
+        from content import create_item
+        from world_map import draw_map
+        draw_map(self)
         stage = STAGES[self.selected_stage - 1]
         detail = pygame.Rect(807, 120, 363, 682)
-        stage_element = ENEMIES[stage.enemies[-1]].element
-        detail_color = ELEMENT_COLORS[stage_element]
-        self.ui.ornamented_panel(self.screen_surface, detail, (35, 31, 29), self.ui.blend(detail_color, COLORS["border"], .42), 13, 2)
-        pygame.draw.circle(self.screen_surface, self.ui.blend(detail_color, COLORS["ink"], .72), (detail.centerx, detail.y + 68), 43)
-        pygame.draw.circle(self.screen_surface, detail_color, (detail.centerx, detail.y + 68), 43, 2)
-        self.ui.text(self.screen_surface, stage.index, (detail.centerx, detail.y + 68), COLORS["text"], "large", "center", True)
-        self.ui.ribbon(self.screen_surface, pygame.Rect(detail.x + 54, detail.y + 119, detail.width - 108, 32), f"ACT {stage.act}  •  DUNGEON", detail_color, "tiny")
-        self.ui.fitted_text(self.screen_surface, stage.name, pygame.Rect(detail.x + 25, detail.y + 161, detail.width - 50, 34), COLORS["text"], "medium", "center")
-        reward_name = ITEM_TEMPLATES[stage.first_clear_item]["name"]
-        reward_text = "REWARD CLAIMED" if stage.index in self.hero.cleared_stages else f"FIRST CLEAR  •  {reward_name.upper()}"
-        self.ui.fitted_text(self.screen_surface, f"LEVEL {stage.recommended_level}  •  {reward_text}", pygame.Rect(detail.x + 24, detail.y + 193, detail.width - 48, 25), COLORS["muted"], "tiny", "center")
-        self.ui.wrapped(self.screen_surface, stage.description, pygame.Rect(detail.x + 25, detail.y + 234, detail.width - 50, 58), COLORS["text"], "small", 3, 2)
-        self.ui.text(self.screen_surface, "THE LINE AHEAD", (detail.x + 24, detail.y + 307), COLORS["muted"], "tiny")
-        y = detail.y + 336
-        for enemy_id in stage.enemies:
-            enemy = ENEMIES[enemy_id]
-            ecolor = ELEMENT_COLORS[enemy.element]
-            pygame.draw.circle(self.screen_surface, self.ui.blend(ecolor, COLORS["ink"], .65), (detail.x + 39, y + 10), 14)
-            pygame.draw.circle(self.screen_surface, ecolor, (detail.x + 39, y + 10), 14, 2)
-            pygame.draw.circle(self.screen_surface, COLORS["text"], (detail.x + 39, y + 7), 3)
-            marker = "BOSS" if enemy.boss else "ELITE" if enemy.elite else enemy.element.value.upper()
-            if "ambusher" in enemy.traits:
-                marker += " / AMBUSH"
-            self.ui.text(self.screen_surface, enemy.name, (detail.x + 63, y), COLORS["text"], "small")
-            self.ui.text(self.screen_surface, marker, (detail.right - 22, y + 2), ecolor, "tiny", "topright")
-            y += 38
-        equipment_y = detail.y + 494
-        self.ui.text(self.screen_surface, "LOADOUT", (detail.x + 24, equipment_y), COLORS["muted"], "tiny")
-        for slot_index, slot in enumerate(("weapon", "shield", "ring1", "ring2")):
-            item = self.hero.equipment[slot]
-            slot_rect = pygame.Rect(detail.x + 24 + slot_index * 78, equipment_y + 26, 68, 73)
-            slot_label = {"weapon": "W", "shield": "S", "ring1": "T1", "ring2": "T2"}[slot]
-            self.ui.item_slot(self.screen_surface, slot_rect, item, self.mouse, False, False, slot_label)
-        boost = self.hero.item_by_uid(self.hero.boost_uid) if self.hero.boost_uid else None
-        boost_rect = pygame.Rect(detail.x + 24, detail.y + 609, 68, 48)
-        if boost:
-            self.ui.draw_item_icon(self.screen_surface, boost_rect, boost)
-        self.ui.text(self.screen_surface, "BOOST", (detail.x + 101, detail.y + 612), COLORS["muted"], "tiny")
-        self.ui.fitted_text(self.screen_surface, boost.display_name if boost else "No potion prepared", pygame.Rect(detail.x + 101, detail.y + 632, 220, 23), self.ui.item_color(boost) if boost else (104, 99, 96), "small")
-        fight = pygame.Rect(detail.x + 22, detail.bottom - 67, detail.width - 44, 49)
-        if self.ui.button(self.screen_surface, fight, "ENTER DUNGEON", self.mouse, self.clicked, True, (213, 89, 75), "medium"):
+        accent = REGION_COLORS[stage.act-1]
+        unlocked = stage.index <= self.hero.unlocked_stage
+        self.ui.ornamented_panel(self.screen_surface, detail, (16,23,31), (61,76,91), 13, 1)
+        self.ui.text(self.screen_surface, f"ACT {stage.act} / DUNGEON {stage.index:02}", (829,143), accent, "tiny")
+        self.ui.wrapped(self.screen_surface, stage.name, pygame.Rect(829,173,318,64), COLORS["text"], "medium", 2, 2)
+        self.ui.text(self.screen_surface, f"LEVEL {stage.recommended_level}   /   {len(stage.enemies)} WAVES", (829,245), COLORS["gold"], "tiny")
+        self.ui.wrapped(self.screen_surface, stage.description, pygame.Rect(829,275,318,58), COLORS["muted"], "small", 3, 3)
+        pygame.draw.line(self.screen_surface, (45,57,69), (829,342), (1148,342))
+        self.ui.text(self.screen_surface, "ENCOUNTERS", (829,355), COLORS["muted"], "tiny")
+        for i,enemy_id in enumerate(stage.enemies):
+            enemy=ENEMIES[enemy_id];y=382+i*24
+            c=ELEMENT_COLORS[enemy.element]
+            pygame.draw.circle(self.screen_surface,c,(835,y+7),3)
+            self.ui.fitted_text(self.screen_surface,enemy.name,pygame.Rect(848,y,210,22),COLORS["text"],"small")
+            self.ui.text(self.screen_surface,"BOSS" if enemy.boss else "ELITE" if enemy.elite else enemy.element.value.upper(),(1145,y+3),c,"tiny","topright")
+        reward = create_item(stage.first_clear_item, random.Random(0), stage.index)
+        reward_rect=pygame.Rect(827,488,323,63)
+        self.ui.panel(self.screen_surface,reward_rect,(24,32,39),self.ui.blend(accent,COLORS["ink"],.55),6)
+        self.ui.draw_item_icon(self.screen_surface,pygame.Rect(835,494,48,48),reward)
+        self.ui.text(self.screen_surface,"REWARD CLAIMED" if stage.index in self.hero.cleared_stages else "FIRST CLEAR REWARD",(895,498),COLORS["muted"],"tiny")
+        self.ui.fitted_text(self.screen_surface,reward.name,pygame.Rect(895,521,241,24),accent,"small")
+        if reward_rect.collidepoint(self.mouse): self.ui.hover_item=reward
+        self.ui.text(self.screen_surface,"YOUR LOADOUT",(829,570),COLORS["muted"],"tiny")
+        for i,slot in enumerate(("weapon","shield","ring1","ring2")):
+            self.ui.item_slot(self.screen_surface,pygame.Rect(829+i*79,594,66,65),self.hero.equipment[slot],self.mouse,False,False,("W","S","T1","T2")[i])
+        boost=self.hero.item_by_uid(self.hero.boost_uid) if self.hero.boost_uid else None
+        if boost:self.ui.draw_item_icon(self.screen_surface,pygame.Rect(830,675,38,38),boost)
+        self.ui.text(self.screen_surface,"PREPARED POTION",(879,676),COLORS["muted"],"tiny")
+        self.ui.fitted_text(self.screen_surface,boost.display_name if boost else "None equipped",pygame.Rect(879,695,266,23),self.ui.item_color(boost) if boost else COLORS["muted"],"small")
+        if self.ui.button(self.screen_surface,pygame.Rect(829,738,319,44),"ENTER DUNGEON" if unlocked else f"CLEAR DUNGEON {stage.index-1} FIRST",self.mouse,self.clicked,unlocked,accent,"small"):
             self.start_battle()
-        workshop_width = 520 if self.hero.campaign_complete else 805
-        workshop_label = "WORKSHOP  •  GEAR & MIXER" if self.hero.campaign_complete else "OPEN WORKSHOP  •  GEAR  •  MIXER  •  CHARACTER"
+        workshop_width = 520 if self.hero.endless_unlocked else 805
+        workshop_label = "WORKSHOP  •  GEAR & MIXER" if self.hero.endless_unlocked else "OPEN WORKSHOP  •  GEAR  •  MIXER  •  CHARACTER"
         if self.ui.button(self.screen_surface, pygame.Rect(30, 831, workshop_width, 61), workshop_label, self.mouse, self.clicked, True, COLORS["blue"], "medium"):
             self.return_screen = Screen.HUB
             self.begin_transition(Screen.INVENTORY, "OPENING THE WORKSHOP")
             self.selected_uid = None
-        if self.hero.campaign_complete:
+        if self.hero.endless_unlocked:
             endless_label = f"ENDLESS  •  DEPTH {self.hero.endless_depth + 1}"
             if self.ui.button(self.screen_surface, pygame.Rect(570, 831, 265, 61), endless_label, self.mouse, self.clicked, True, (158, 87, 202), "small"):
                 self.start_endless()
@@ -1354,6 +1351,7 @@ class Game:
         recipes = pygame.Rect(work.right - 226, work.bottom - 56, 186, 40)
         if self.ui.button(self.screen_surface, recipes, "RECIPE BOOK", self.mouse, self.clicked, True, COLORS["gold"], "small"):
             self.screen = Screen.RECIPES
+            self.audio.play("book")
         if self.ui.button(self.screen_surface, pygame.Rect(30, 861, 210, 59), "BACK", self.mouse, self.clicked, True, COLORS["border"], "medium"):
             self.screen = self.return_screen
             self.mixer_left = None
@@ -1424,9 +1422,12 @@ class Game:
         self.ui.ribbon(self.screen_surface, pygame.Rect(left_page.centerx - 105, left_page.y + 10, 210, 31), "FIELD FORMULAE I", COLORS["wood_light"], "tiny")
         self.ui.ribbon(self.screen_surface, pygame.Rect(right_page.centerx - 105, right_page.y + 10, 210, 31), "FIELD FORMULAE II", COLORS["wood_light"], "tiny")
         entries = sorted(RECIPES.items(), key=lambda value: ITEM_TEMPLATES[value[1]]["tier"])
-        rows_per_page = max(1, math.ceil(len(entries) / 2))
-        row_step = min(60, max(42, (left_page.height - 60) // rows_per_page))
-        for index, (ingredients, output) in enumerate(entries):
+        page_count = max(1, math.ceil(len(entries) / 24))
+        self.recipe_page = min(self.recipe_page, page_count - 1)
+        visible_entries = entries[self.recipe_page * 24:(self.recipe_page + 1) * 24]
+        rows_per_page = max(1, math.ceil(len(visible_entries) / 2))
+        row_step = 50
+        for index, (ingredients, output) in enumerate(visible_entries):
             col, row = divmod(index, rows_per_page)
             page = left_page if col == 0 else right_page
             rect = pygame.Rect(page.x + 14, page.y + 53 + row * row_step, page.width - 28, row_step - 6)
@@ -1446,12 +1447,17 @@ class Game:
                 left_name = ITEM_TEMPLATES[ingredients[0]]["name"]
                 right_name = ITEM_TEMPLATES[ingredients[1]]["name"]
                 output_name = ITEM_TEMPLATES[output]["name"]
-                self.ui.text(self.screen_surface, "✓", seal, color, "small", "center")
+                pygame.draw.lines(self.screen_surface, color, False, [(seal[0]-6,seal[1]), (seal[0]-1,seal[1]+5), (seal[0]+7,seal[1]-6)], 2)
                 self.ui.fitted_text(self.screen_surface, f"{left_name} + {right_name}", pygame.Rect(rect.x + 55, rect.y + 2, rect.width - 66, rect.height // 2), COLORS["muted"], "tiny")
                 self.ui.fitted_text(self.screen_surface, f"=>  {output_name}", pygame.Rect(rect.x + 55, rect.centery, rect.width - 66, rect.height // 2 - 1), color, "small")
             else:
                 self.ui.text(self.screen_surface, "?", seal, color, "small", "center")
                 self.ui.text(self.screen_surface, "Unknown pairing  =>  Unwritten result", (rect.x + 55, rect.centery), (112, 102, 92), "small", "midleft")
+        self.ui.text(self.screen_surface, f"PAGE {self.recipe_page + 1} / {page_count}", (760, 890), COLORS["gold"], "small", "center")
+        if self.ui.button(self.screen_surface, pygame.Rect(525, 861, 150, 59), "PREVIOUS", self.mouse, self.clicked, self.recipe_page > 0, COLORS["border"], "small"):
+            self.recipe_page -= 1
+        if self.ui.button(self.screen_surface, pygame.Rect(855, 861, 150, 59), "NEXT", self.mouse, self.clicked, self.recipe_page < page_count - 1, COLORS["gold"], "small"):
+            self.recipe_page += 1
         if self.ui.button(self.screen_surface, pygame.Rect(40, 861, 220, 59), "BACK TO MIXER", self.mouse, self.clicked, True, COLORS["border"], "medium"):
             self.screen = Screen.MIXER
 
@@ -1507,6 +1513,9 @@ class Game:
                 self.screen_surface.blit(flash, rect)
             else:
                 self.screen_surface.blit(sprite, rect)
+            if not hasattr(self, "combat_bounds"):
+                self.combat_bounds = {}
+            self.combat_bounds["hero"] = sprite.get_bounding_rect().move(rect.topleft)
             self.draw_equipped_gear(rect, display_anim, elapsed)
             return
         if anim == "defeat":
@@ -1672,9 +1681,11 @@ class Game:
                 trail_color = ELEMENT_COLORS[weapon.element] if weapon.element != Element.NEUTRAL else (232, 190, 91)
                 offsets = (-16, -31) if pose == "critical" else (-19,)
                 for trail_index, angle_offset in enumerate(reversed(offsets)):
-                    ghost = image.copy()
-                    ghost.fill((*trail_color, 0), special_flags=pygame.BLEND_RGBA_ADD)
-                    ghost.set_alpha(34 + trail_index * 18)
+                    # Tint only occupied pixels; transparent texels must remain
+                    # transparent through SDL rotation and alpha composition.
+                    ghost = pygame.mask.from_surface(image).to_surface(
+                        setcolor=(*trail_color, 34 + trail_index * 18),
+                        unsetcolor=(0, 0, 0, 0))
                     blit_at_grip(ghost, right_grip, angle + angle_offset)
             blit_at_grip(image, right_grip, angle)
             hand_radius = max(2, round(1.65 * unit))
@@ -1702,7 +1713,7 @@ class Game:
         x, y = pos.x + lunge + hit_kick, pos.y + bob
         height = 370 if enemy.boss else 345 if enemy.elite else 320
         size_scale = {
-            "dust_rat": .72, "bone_scout": .76, "crypt_slinger": .78,
+            "dust_rat": .43, "bone_scout": .76, "crypt_slinger": .78,
             "marrow_guard": .84, "ossuary_captain": .88, "cinder_imp": .72,
             "ash_hound": .74, "furnace_knight": .88, "coal_oracle": .78,
             "pyre_warden": .88, "rime_widow": .74, "icebound_thrall": .82,
@@ -1711,10 +1722,11 @@ class Game:
             "rune_golem": .90, "alchemist_revenant": .88, "void_acolyte": .80,
             "crownless_guard": .86, "starved_dragon": .86, "oathbreaker": .86,
             "hollow_sovereign": .88,
-        }.get(enemy.enemy_id, 1.0)
+        }.get(enemy.enemy_id, .80)
         height = round(height * size_scale)
         max_width = 460 if enemy.boss else 420
-        sprite = self.sprites.frame("enemy", anim, elapsed, height, enemy.enemy_id, max_width)
+        # Never use authored death sheets: some already contain a sideways fall.
+        sprite = self.sprites.frame("enemy", "idle" if dying else anim, 0 if dying else elapsed, height, enemy.enemy_id, max_width)
         if sprite:
             # Several source actors use near-black cloaks and armor. Against the
             # dungeon backdrop those pixels looked transparent, even though the
@@ -1726,14 +1738,7 @@ class Game:
             death_progress = min(1.0, elapsed / .88) if dying else 0.0
             death_flash = max(0.0, 1.0 - abs(death_progress - .16) / .16) if dying else 0.0
             fade = max(0.0, 1.0 - max(0.0, death_progress - .22) / .78) if dying else 1.0
-            if dying:
-                fall = death_progress * death_progress * (3 - 2 * death_progress)
-                sprite = pygame.transform.rotate(sprite, -67 * fall)
-                if death_progress > .46:
-                    collapse = (death_progress - .46) / .54
-                    collapsed_height = max(8, round(sprite.get_height() * (1 - collapse * .48)))
-                    sprite = pygame.transform.scale(sprite, (sprite.get_width(), collapsed_height))
-            elif anim == "attack":
+            if anim == "attack":
                 impact = math.sin(min(1.0, attack_progress) * math.pi)
                 attack_width = max(1, round(sprite.get_width() * (1 + impact * .10)))
                 attack_height = max(1, round(sprite.get_height() * (1 - impact * .055)))
@@ -1756,17 +1761,21 @@ class Game:
                     sprite = pygame.transform.scale(sprite, (max(1, round(sprite.get_width() * fit)), max(1, round(sprite.get_height() * fit))))
                     rect = sprite.get_rect(midbottom=(round(x), round(render_y + 18)))
                 rect.clamp_ip(art_frame)
+            pose_key = (id(self.battle), getattr(self.battle, "enemy_index", 0), enemy.enemy_id)
+            cached_pose = getattr(self, "enemy_still_pose", None)
+            if dying and cached_pose and cached_pose[0] == pose_key:
+                _, sprite, rect, y = cached_pose
+            else:
+                self.enemy_still_pose = (pose_key, sprite.copy(), rect.copy(), y)
+            if not hasattr(self, "combat_bounds"):
+                self.combat_bounds = {}
+            self.combat_bounds["enemy"] = sprite.get_bounding_rect().move(rect.topleft)
             shadow_width = max(46, round(sprite.get_width() * .72))
             shadow = pygame.Surface((shadow_width, 36), pygame.SRCALPHA)
             pygame.draw.ellipse(shadow, (4, 5, 7, round(255 * fade)), shadow.get_rect())
             body_center_x = rect.centerx
             self.screen_surface.blit(shadow, (body_center_x - shadow_width / 2, y - 4))
             if not dying:
-                aura_size = (sprite.get_width() + 40, sprite.get_height() + 40)
-                aura_position = (rect.centerx - aura_size[0] / 2, rect.top - 20)
-                aura = pygame.Surface(aura_size, pygame.SRCALPHA)
-                pygame.draw.ellipse(aura, (*color, 42 if enemy.boss else 27), aura.get_rect().inflate(-12, -12), 7 if enemy.boss else 4)
-                self.screen_surface.blit(aura, aura_position)
                 if anim == "ready":
                     charge = (math.sin(elapsed * 15) + 1) * .5
                     ring = pygame.Surface((sprite.get_width() + 70, 42), pygame.SRCALPHA)
@@ -1793,10 +1802,10 @@ class Game:
             rim = pygame.Surface(sprite.get_size(), pygame.SRCALPHA)
             enemy_mask.to_surface(
                 rim,
-                setcolor=(*rim_color, round((132 if enemy.boss else 112) * fade)),
+                setcolor=(*rim_color, round((75 if enemy.boss else 35) * fade)),
                 unsetcolor=(0, 0, 0, 0),
             )
-            rim_width = max(2, min(4, round(sprite.get_height() / 105)))
+            rim_width = 1
             for offset_x, offset_y in (
                 (-rim_width, 0), (rim_width, 0), (0, -rim_width), (0, rim_width),
                 (-rim_width, -rim_width), (rim_width, -rim_width),
@@ -1805,10 +1814,10 @@ class Game:
                 self.screen_surface.blit(rim, rect.move(offset_x, offset_y))
             if dying:
                 body = sprite.copy()
-                body.set_alpha(round(255 * fade))
-                white = sprite.copy()
-                white.fill((255, 255, 255, 0), special_flags=pygame.BLEND_RGBA_MAX)
-                white.set_alpha(round(105 * fade * death_flash))
+                body.fill((255, 255, 255, round(255 * fade)), special_flags=pygame.BLEND_RGBA_MULT)
+                white = enemy_mask.to_surface(
+                    setcolor=(255, 255, 255, round(105 * fade * death_flash)),
+                    unsetcolor=(0, 0, 0, 0))
                 self.screen_surface.blit(body, rect)
                 self.screen_surface.blit(white, rect)
             elif self.enemy_hit_flash > 0:
@@ -1922,11 +1931,25 @@ class Game:
             return True
         return False
 
+    def health_fill(self, actor, value, dt=None):
+        key = (id(self.battle), self.battle.enemy_index if actor == "enemy" else -1, actor)
+        if not hasattr(self, "health_fills"):
+            self.health_fills = {}
+        old = self.health_fills.get(actor)
+        current = float(value) if old is None or old[0] != key else old[1]
+        if dt is not None:
+            current += (value - current) * (1 - math.exp(-12 * dt))
+            if abs(value - current) < .1:
+                current = float(value)
+        self.health_fills[actor] = (key, current)
+        return current
+
     def draw_battle(self):
         element_color = ELEMENT_COLORS[self.battle.enemy.element]
         stage_act = self.battle.stage.act
         scene = pygame.Rect(0, 0, WIDTH, 666)
         self.ui.draw_cavern(self.screen_surface, scene, self.battle.enemy.element, stage_act, self.battle.anim_clock)
+        pygame.draw.rect(self.screen_surface, (10,16,23), (0,0,WIDTH,150))
         shake_x = math.sin(self.time * 211) * min(5, self.shake * 70) if self.shake > 0 else 0
         hero_plaque = pygame.Rect(26, 25, 430, 116)
         enemy_plaque = pygame.Rect(744, 25, 430, 116)
@@ -1938,8 +1961,8 @@ class Game:
         enemy_rank = "BOSS" if self.battle.enemy.boss else "ELITE" if self.battle.enemy.elite else self.battle.enemy.element.value.upper()
         self.ui.text(self.screen_surface, enemy_rank, (enemy_plaque.x + 18, enemy_plaque.y + 20), COLORS["muted"], "tiny")
         hero_health = pygame.Rect(hero_plaque.x + 20, hero_plaque.y + 54, hero_plaque.width - 40, 27)
-        self.ui.bar(self.screen_surface, hero_health, self.battle.hero_hp, self.battle.hero_max_hp, (204, 57, 69), "HP")
-        self.ui.bar(self.screen_surface, pygame.Rect(enemy_plaque.x + 20, enemy_plaque.y + 54, enemy_plaque.width - 40, 27), self.battle.enemy.hp, self.battle.enemy.max_hp, (204, 57, 69), "HP")
+        self.ui.bar(self.screen_surface, hero_health, self.battle.hero_hp, self.battle.hero_max_hp, (204, 57, 69), "HP", fill_value=self.health_fill("hero", self.battle.hero_hp))
+        self.ui.bar(self.screen_surface, pygame.Rect(enemy_plaque.x + 20, enemy_plaque.y + 54, enemy_plaque.width - 40, 27), self.battle.enemy.hp, self.battle.enemy.max_hp, (204, 57, 69), "HP", fill_value=self.health_fill("enemy", self.battle.enemy.hp))
         barrier_text = f"   BARRIER {self.battle.hero_barrier}" if self.battle.hero_barrier else ""
         self.ui.text(self.screen_surface, f"ATK {self.battle.hero_attack}   DEF {self.battle.hero_defense}   LUCK {self.battle.hero_luck}{barrier_text}", (hero_plaque.x + 20, hero_plaque.y + 91), COLORS["muted"], "tiny")
         self.ui.text(self.screen_surface, f"ATK {self.battle.enemy.attack}   DEF {self.battle.enemy.defense}   LUCK {self.battle.enemy.luck}", (enemy_plaque.right - 20, enemy_plaque.y + 91), COLORS["muted"], "tiny", "topright")
@@ -1993,10 +2016,22 @@ class Game:
         for burst in self.fx_bursts:
             burst.draw(self.screen_surface)
         for notice in self.float_notices:
-            alpha = max(0, round(255 * (1 - notice.age / notice.duration)))
-            image = self.ui.fonts["medium"].render(notice.text, True, notice.color)
-            image.set_alpha(alpha)
-            self.screen_surface.blit(image, image.get_rect(center=(notice.x, notice.y)))
+            alpha = round(255 * min(1.0, max(0.0, (notice.duration - notice.age) / .35)))
+            font = self.ui.fonts["medium"]
+            image = font.render(notice.text, True, notice.color)
+            outline = font.render(notice.text, True, (8, 10, 15))
+            label = pygame.Surface((image.get_width() + 4, image.get_height() + 4), pygame.SRCALPHA)
+            for ox, oy in ((0, 2), (4, 2), (2, 0), (2, 4)):
+                label.blit(outline, (ox, oy))
+            label.blit(image, (2, 2))
+            label.fill((255, 255, 255, alpha), special_flags=pygame.BLEND_RGBA_MULT)
+            self.screen_surface.blit(label, label.get_rect(center=(notice.x, notice.y)))
+        hero_status, enemy_status = self.battle_status()
+        for text, x, color in ((hero_status,330,COLORS["green"]),(enemy_status,875,COLORS["blue"])):
+            if text:
+                rect = pygame.Rect(x-230,616,460,25)
+                self.ui.panel(self.screen_surface,rect,COLORS["panel"],COLORS["border_dark"],6)
+                self.ui.fitted_text(self.screen_surface,text,rect.inflate(-16,-2),color,"tiny","center")
         deck = pygame.Rect(0, 650, WIDTH, 310)
         pygame.draw.rect(self.screen_surface, (9, 14, 21), deck)
         pygame.draw.line(self.screen_surface, COLORS["border"], (0, deck.y), (WIDTH, deck.y), 2)
@@ -2013,7 +2048,7 @@ class Game:
             slot_label = {"weapon": "W", "shield": "S", "ring1": "T1", "ring2": "T2"}[slot]
             self.ui.item_slot(self.screen_surface, icon_rect, item, self.mouse, False, False, slot_label)
         equipped_shield = self.hero.equipment.get("shield")
-        shield_status = f"{equipped_shield.display_name}  •  +{equipped_shield.stats.get('defense', 0)} DEF" if equipped_shield else "NO SHIELD  •  FIRST SHIELD: DUNGEON 1"
+        shield_status = f"{equipped_shield.display_name}  •  +{equipped_shield.stats.get('defense', 0)} DEF" if equipped_shield else "SHIELD: STAGE 1 REWARD"
         self.ui.fitted_text(self.screen_surface, shield_status, pygame.Rect(loadout_rect.x + 14, loadout_rect.y + 111, loadout_rect.width - 28, 18), self.ui.item_color(equipped_shield) if equipped_shield else (218, 132, 86), "tiny", "center")
         stats = (("ATK", self.battle.hero_attack, (230, 143, 70)), ("DEF", self.battle.hero_defense, (83, 151, 226)), ("LUCK", self.battle.hero_luck, (186, 105, 220)))
         for index, (label, value, color) in enumerate(stats):
@@ -2065,7 +2100,7 @@ class Game:
             self.ui.fitted_text(self.screen_surface, "> " + event.text, pygame.Rect(action_rect.x + 16, y, action_rect.width - 32, 20), color, "tiny")
             y += 22
         pygame.draw.line(self.screen_surface, COLORS["border_dark"], (action_rect.x + 15, action_rect.y + 108), (action_rect.right - 15, action_rect.y + 108), 1)
-        use = pygame.Rect(action_rect.x + 24, action_rect.y + 194, action_rect.width - 48, 43)
+        use = pygame.Rect(action_rect.x + 24, action_rect.y + 194, action_rect.width - 48, 37)
         left = self.hero.item_by_uid(self.mixer_left)
         right = self.hero.item_by_uid(self.mixer_right)
         if left or right:
@@ -2114,7 +2149,7 @@ class Game:
                 if ok:
                     self.save()
                 self.toast(message)
-        self.ui.text(self.screen_surface, "AUTOMATIC  •  FIXED PACE", (action_rect.centerx, action_rect.bottom - 12), COLORS["muted"], "tiny", "midbottom")
+        self.ui.text(self.screen_surface, "AUTOMATIC  •  FIXED PACE", (action_rect.centerx, action_rect.bottom - 6), COLORS["muted"], "tiny", "midbottom")
         if self.battle.outcome in {BattleOutcome.DEFEAT, BattleOutcome.RETREATED}:
             self.draw_battle_result()
 
@@ -2231,7 +2266,7 @@ class Game:
         veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         veil.fill((18, 10, 27, 72))
         self.screen_surface.blit(veil, (0, 0))
-        self.header("THE CROWN IS HOLLOW", "Campaign complete  •  The descent remembers you")
+        self.header("THE GATE OPENS", "Campaign complete  •  The descent remembers you")
         frame = pygame.Rect(90, 130, 1020, 680)
         self.ui.ornamented_panel(self.screen_surface, frame, (25, 22, 31), (175, 104, 209), 16, 2)
         portrait = pygame.Rect(frame.x + 38, frame.y + 38, 360, 430)
@@ -2241,7 +2276,7 @@ class Game:
         pygame.draw.polygon(self.screen_surface, COLORS["gold"], [(portrait.centerx - 34, portrait.y + 58), (portrait.centerx - 15, portrait.y + 82), (portrait.centerx, portrait.y + 53), (portrait.centerx + 16, portrait.y + 82), (portrait.centerx + 35, portrait.y + 58), (portrait.centerx + 28, portrait.y + 99), (portrait.centerx - 27, portrait.y + 99)], 3)
         text_x = frame.x + 445
         self.ui.text(self.screen_surface, "THE WAYFARER RETURNS", (text_x, frame.y + 51), COLORS["gold"], "large")
-        story = "The Hollow Sovereign falls, but the road beneath the throne does not end. Every enemy, every item and every choice now echoes below in a dungeon that rebuilds itself after each victory."
+        story = "The First Light lowers its wings. Beyond the drowned archive and the iron cathedral, morning reaches the kingdom again. The gate is open, but the Endless Descent still remembers every step."
         self.ui.wrapped(self.screen_surface, story, pygame.Rect(text_x, frame.y + 119, 510, 118), COLORS["text"], "body", 8, 5)
         stats = (("LEVEL", self.hero.level), ("WINS", self.hero.total_wins), ("ENEMIES", self.hero.total_enemies), ("RECIPES", f"{len(self.hero.discovered_recipes)}/{len(RECIPES)}"))
         for index, (label, value) in enumerate(stats):
@@ -2250,16 +2285,91 @@ class Game:
             self.ui.stat_chip(self.screen_surface, chip, label, value, (183, 103, 216) if col else COLORS["gold"])
         unlock = pygame.Rect(frame.x + 38, frame.bottom - 164, frame.width - 76, 94)
         self.ui.ornamented_panel(self.screen_surface, unlock, (35, 25, 43), (175, 104, 209), 11, 2)
-        self.ui.text(self.screen_surface, "ENDLESS DESCENT UNLOCKED", (unlock.x + 24, unlock.y + 18), (208, 139, 235), "medium")
+        self.ui.text(self.screen_surface, "BEYOND THE FIRST LIGHT", (unlock.x + 24, unlock.y + 18), (208, 139, 235), "medium")
         self.ui.text(self.screen_surface, "Scaling enemies  •  rotating bosses  •  three automatic drops  •  no final depth", (unlock.x + 26, unlock.y + 57), COLORS["muted"], "small")
         if self.ui.button(self.screen_surface, pygame.Rect(390, 843, 420, 62), "CONTINUE INTO THE ENDLESS", self.mouse, self.clicked, True, (162, 89, 204), "medium"):
             self.hero.ending_seen = True
             self.begin_transition(Screen.HUB, "THE DESCENT CONTINUES")
             self.save()
 
+    def battle_status(self):
+        b = self.battle
+        hero = []
+        if b.hero_barrier:
+            hero.append(f"BARRIER {b.hero_barrier}")
+        if b.boost_turns > 0:
+            bonuses = " ".join(f"+{value} {dict(attack='ATK',defense='DEF',luck='LUCK')[key]}" for key,value in b.bonus_stats.items() if value)
+            hero.append(f"{bonuses} / {b.boost_turns} TURNS")
+        if b.revive_ratio > 0:
+            hero.append("REVIVE READY")
+        enemy = f"CHILLED / -{round(b.enemy_chill*100)}% ATK" if b.enemy_chill else ""
+        return "  |  ".join(hero), enemy
+
+    def draw_pause_panel(self, clicked):
+        veil = pygame.Surface((WIDTH,HEIGHT), pygame.SRCALPHA)
+        veil.fill((3,6,10,205))
+        self.screen_surface.blit(veil,(0,0))
+        panel=pygame.Rect(260,230,680,510)
+        self.ui.ornamented_panel(self.screen_surface,panel,COLORS["panel"],COLORS["border"],12,2)
+        self.ui.text(self.screen_surface,"PAUSED",(600,270),COLORS["gold"],"large","center")
+        self.ui.text(self.screen_surface,f"Wave {self.battle.wave_number}/{self.battle.wave_total}  /  {self.battle.enemy.name}",(600,318),font="body",anchor="center")
+        self.ui.text(self.screen_surface,"RECENT COMBAT",(292,364),COLORS["muted"],"small")
+        for index,event in enumerate(list(self.battle.history)[-5:]):
+            self.ui.fitted_text(self.screen_surface,event.text,pygame.Rect(292,396+index*32,616,26),COLORS["text"],"small")
+        self.ui.text(self.screen_surface,"Retreat keeps earned XP and collected items.",(600,590),COLORS["muted"],"small","center")
+        if self.ui.button(self.screen_surface,pygame.Rect(296,639,288,52),"RESUME  [P / ESC]",self.mouse,clicked,True,COLORS["green"],"small"):
+            self.battle_paused=False
+        if self.ui.button(self.screen_surface,pygame.Rect(616,639,288,52),"RETREAT TO MAP",self.mouse,clicked,True,COLORS["border"],"small"):
+            self.battle.retreat()
+            self.battle_paused=False
+            self.battle_processed=True
+            self.begin_transition(Screen.HUB,"LEAVING THE ARENA")
+            self.save()
+
+    def music_for_screen(self):
+        if self.screen == Screen.BATTLE and self.battle:
+            if self.battle.outcome in {BattleOutcome.DEFEAT, BattleOutcome.RETREATED}:
+                return "ambient"
+            if self.battle.enemy.boss:
+                return "boss"
+            return "fire" if self.battle.stage.act in (2, 7) else "battle"
+        if self.screen == Screen.HUB:
+            act = STAGES[max(0, min(len(STAGES)-1, self.selected_stage-1))].act
+            return "fire" if act in (2, 7) else "mystic" if act in {3, 5, 6, 8} else "dungeon"
+        return "mystic"
+
+    def draw_audio_panel(self, clicked):
+        veil = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        veil.fill((3, 6, 10, 205))
+        self.screen_surface.blit(veil, (0, 0))
+        panel = pygame.Rect(300, 275, 600, 385)
+        self.ui.ornamented_panel(self.screen_surface, panel, COLORS["panel"], COLORS["border"], 12, 2)
+        self.ui.text(self.screen_surface, "AUDIO", (600, 313), COLORS["gold"], "large", "center")
+        for index, (bus, title) in enumerate((("music", "MUSIC"), ("effects", "SOUND EFFECTS"))):
+            y = 375 + index * 92
+            value = getattr(self.audio, bus + "_volume")
+            active = getattr(self.audio, bus + "_enabled")
+            self.ui.text(self.screen_surface, title, (330, y+17), font="small")
+            self.ui.text(self.screen_surface, f"{round(value*100)}%", (620, y+21), COLORS["text"], "medium", "center")
+            for x, delta, label in ((525,-.1,"-"),(685,.1,"+")):
+                if self.ui.button(self.screen_surface, pygame.Rect(x,y,46,40), label, self.mouse, clicked, True, COLORS["border"], "medium"):
+                    self.audio.set_volume(bus, value+delta)
+                    if bus == "effects":
+                        self.audio.play("equip")
+            if self.ui.button(self.screen_surface, pygame.Rect(741,y,123,40), "ON" if active else "MUTED", self.mouse, clicked, True, COLORS["green"] if active else COLORS["border"], "small"):
+                self.audio.toggle_music() if bus == "music" else self.audio.toggle_effects()
+        track = self.audio.TRACK_LABEL.get(self.audio.current_music, "Audio unavailable" if not self.audio.enabled else "Starting music...")
+        self.ui.fitted_text(self.screen_surface, track, pygame.Rect(325,558,550,26), COLORS["muted"], "small", "center")
+        if self.ui.button(self.screen_surface, pygame.Rect(470,604,260,38), "DONE", self.mouse, clicked, True, COLORS["border"], "small"):
+            self.audio_panel = False
+
     def draw(self):
         self.item_drag_zones = []
-        self.audio.music("battle" if self.screen == Screen.BATTLE else "ambient")
+        self.ui.hover_item = None
+        panel_click = self.clicked
+        if self.audio_panel or self.battle_paused:
+            self.clicked = False
+        self.audio.music(self.music_for_screen())
         if self.screen == Screen.MAIN_MENU:
             self.draw_main_menu()
         elif self.screen == Screen.HUB:
@@ -2279,10 +2389,24 @@ class Game:
         elif self.screen == Screen.EPILOGUE:
             self.draw_epilogue()
         self.draw_brand_mark()
+        self.ui.text(self.screen_surface, "M  MUSIC " + ("ON" if self.audio.music_enabled else "OFF") + "   N  SFX " + ("ON" if self.audio.effects_enabled else "OFF"), (1018,945), COLORS["muted"], "tiny", "bottomright")
+        if self.ui.button(self.screen_surface, pygame.Rect(1038,936,144,23), "AUDIO", self.mouse, self.clicked, self.transition_target is None, COLORS["border"], "tiny"):
+            self.audio_panel = True
+            panel_click = False
+        if self.screen == Screen.BATTLE and self.battle and self.battle.active:
+            if self.ui.button(self.screen_surface, pygame.Rect(18,936,180,23), "PAUSE  [P / ESC]", self.mouse, self.clicked, self.transition_target is None, COLORS["border"], "tiny"):
+                self.battle_paused = True
+                panel_click = False
         self.draw_craft_reveal()
         self.draw_item_drag_overlay()
         self.ui.toast(self.screen_surface, self.toast_text, self.toast_age)
+        if not self.drag_active and self.transition_target is None and not (self.battle_paused or self.audio_panel):
+            self.ui.draw_item_tooltip(self.screen_surface, self.mouse, self.time)
         self.draw_transition()
+        if self.battle_paused:
+            self.draw_pause_panel(panel_click)
+        if self.audio_panel:
+            self.draw_audio_panel(panel_click)
         self.present()
         self.clicked = False
 

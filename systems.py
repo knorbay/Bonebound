@@ -1,3 +1,4 @@
+from campaign_config import TOTAL_STAGES, MAX_ITEM_TIER
 import hashlib
 import json
 import os
@@ -16,7 +17,7 @@ class SaveError(Exception):
 
 
 class SaveManager:
-    VERSION = 4
+    VERSION = 5
 
     WEAPON_ATTACK_V4 = {
         "wayfarer_blade": 7,
@@ -96,6 +97,10 @@ class SaveManager:
                 raise ValueError
             save_version = int(payload.get("version", 0))
             hero = Hero.from_dict(hero_data)
+            if save_version < 5 and 25 in hero.cleared_stages:
+                hero.unlocked_stage = max(26, hero.unlocked_stage)
+                hero.campaign_complete = False
+                hero.ending_seen = False
             if save_version < 4:
                 for item in hero.inventory + hero.equipment_items():
                     base_attack = self.WEAPON_ATTACK_V4.get(item.template_id)
@@ -276,7 +281,7 @@ class Mixer:
         item.name = cls._fusion_name(item, catalyst)
         item.stack = 1
         item.max_stack = 1
-        item.tier = min(5, max(item.tier, catalyst.tier))
+        item.tier = min(MAX_ITEM_TIER, max(item.tier, catalyst.tier))
         item.value += max(3, catalyst.value // 3) + item.tier * 2
         if effectful:
             item.description = "A one-off fusion whose visible inlay carries every compatible trace of its catalyst."
@@ -370,13 +375,13 @@ class Mixer:
         elif item.kind == ItemKind.ESSENCE:
             if catalyst.kind == ItemKind.ESSENCE:
                 before = (item.tier, item.element_power)
-                item.tier = min(5, max(item.tier, catalyst.tier) + 1)
+                item.tier = min(MAX_ITEM_TIER, max(item.tier, catalyst.tier) + 1)
                 item.element_power = min(100, item.element_power + catalyst.element_power)
                 effectful = before != (item.tier, item.element_power)
         elif item.kind == ItemKind.MATERIAL:
             before = (item.value, item.tier)
             item.value += max(1, catalyst.value // 2)
-            item.tier = min(5, max(item.tier, catalyst.tier) + (1 if item.template_id == catalyst.template_id else 0))
+            item.tier = min(MAX_ITEM_TIER, max(item.tier, catalyst.tier) + (1 if item.template_id == catalyst.template_id else 0))
             effectful = before != (item.value, item.tier)
         cls._stamp_fusion(item, catalyst, effectful)
         return effectful
@@ -404,7 +409,7 @@ class Mixer:
 
         special = recipe_result(left.template_id, right.template_id)
         if special:
-            stage = max(1, min(25, max(left.tier, right.tier) * 5))
+            stage = max(1, min(TOTAL_STAGES, max(left.tier, right.tier) * 5))
             result = create_item(special, random.Random(0), stage)
             result.uid = "mix-preview"
             return result
@@ -442,7 +447,7 @@ class Mixer:
         if special:
             seed_text = f"{left.uid}:{consumed.uid}:{special}".encode("utf-8")
             seed = int(hashlib.sha256(seed_text).hexdigest()[:16], 16)
-            crafted = create_item(special, random.Random(seed), max(1, min(25, max(left.tier, consumed.tier) * 5)))
+            crafted = create_item(special, random.Random(seed), max(1, min(TOTAL_STAGES, max(left.tier, consumed.tier) * 5)))
             crafted.uid = left.uid
             from content import ITEM_TEMPLATES
 

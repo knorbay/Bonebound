@@ -1,3 +1,4 @@
+from campaign_config import TOTAL_STAGES, ACT_COUNT, MAX_ITEM_TIER
 import random
 
 from models import Element, EnemyTemplate, Item, ItemKind, Stage
@@ -402,6 +403,27 @@ ITEM_TEMPLATES = {
 }
 
 
+# Regional sidegrades: each pair has a distinct combat role and a guaranteed recipe.
+REGIONAL_ITEMS = (
+    ("ossuary_lance", "Ossuary Lance", ItemKind.WEAPON, {"attack": 13, "defense": 2}, Element.NEUTRAL, {"armor_pierce": .12}, ("piercing",), "A ribbed spear recovered from the burial watch. Built for armored foes."),
+    ("mourner_seal", "Mourner Seal", ItemKind.RING, {"health": 5, "luck": 1}, Element.NEUTRAL, {"heal_on_victory": 3}, (), "A silver tear for the nameless dead. Restores health after each defeated enemy."),
+    ("cinder_scythe", "Cinder Scythe", ItemKind.WEAPON, {"attack": 17, "luck": 1}, Element.FIRE, {"burn_chance": .18}, ("execution",), "The furnace harvests its own fuel. A finishing weapon with bursts of fire."),
+    ("kiln_heart", "Kiln Heart", ItemKind.RING, {"health": 7, "defense": 2}, Element.FIRE, {"barrier_on_start": 9}, (), "A coal that refuses to cool. Its barrier is granted once at battle start."),
+    ("glacier_glaive", "Glacier Glaive", ItemKind.WEAPON, {"attack": 21, "defense": 2}, Element.ICE, {"chill_chance": .20}, ("shatter",), "A crescent of ancient ice. Blocked strikes charge the next blow."),
+    ("thunder_dial", "Thunder Dial", ItemKind.RING, {"luck": 3, "attack": 2}, Element.STORM, {"double_strike_chance": .10}, (), "Its hand strikes twice at midnight. Chance to amplify a strike by 65%."),
+    ("bog_sickle", "Bog Sickle", ItemKind.WEAPON, {"attack": 25, "health": 4}, Element.VENOM, {"poison_chance": .22}, ("leech",), "A hooked reed fed on bitter sap. Trades defense for health stolen on hit."),
+    ("spore_lantern", "Spore Lantern", ItemKind.RING, {"health": 8, "defense": 2}, Element.VENOM, {"poison_resist": .45, "heal_on_victory": 3}, (), "Sealed spores filter the mire. Resists the venomous enemy's extra point of damage."),
+    ("eclipse_halberd", "Eclipse Halberd", ItemKind.WEAPON, {"attack": 32, "luck": 3}, Element.ARCANE, {"boss_damage": .15}, ("boss_hunter",), "A crescent carried by the king's last hunter. Forged for sovereign prey."),
+    ("starless_compass", "Starless Compass", ItemKind.RING, {"luck": 4, "defense": 3}, Element.ARCANE, {"dodge_chance": .08, "element_resist": .10}, (), "It points away from tomorrow's wound. A defensive relic for the final descent."),
+)
+for _i, (_id, _name, _kind, _stats, _element, _effects, _traits, _description) in enumerate(REGIONAL_ITEMS):
+    ITEM_TEMPLATES[_id] = _item(_name, _kind, stats=_stats,
+        caps={key: value + (10 if key == "attack" else 4) for key, value in _stats.items()},
+        element=_element, element_power=0 if _element == Element.NEUTRAL else 2 + _i // 4,
+        tier=1 + _i // 2, effects=_effects, traits=_traits, description=_description,
+        value=45 + (_i // 2) * 65)
+
+
 _ITEM_TRAITS = {
     "rusted_falchion": ("keen",),
     "bone_cleaver": ("execution",),
@@ -465,7 +487,7 @@ def create_item(template_id, rng=None, stage=1):
         raise KeyError(f"Unknown item template: {template_id}")
     roller = rng if rng is not None else random.Random()
     template = ITEM_TEMPLATES[template_id]
-    stage = max(1, min(25, int(stage)))
+    stage = max(1, min(TOTAL_STAGES, int(stage)))
     stats = dict(template["stats"])
     quality_limit = max(0, min(4, (stage - 1) // 6))
     for stat, cap in template["caps"].items():
@@ -474,7 +496,7 @@ def create_item(template_id, rng=None, stage=1):
         if headroom and quality_limit:
             stats[stat] = base + roller.randint(0, min(headroom, quality_limit))
     rolled_bonus = sum(max(0, stats.get(key, 0) - template["stats"].get(key, 0)) for key in template["caps"])
-    item_tier = template["tier"] if template["max_stack"] > 1 else max(template["tier"], min(5, (stage + 4) // 5))
+    item_tier = template["tier"] if template["max_stack"] > 1 else max(template["tier"], min(MAX_ITEM_TIER, (stage + 4) // 5))
     uid = f"{roller.randint(0, 16 ** 12 - 1):012x}"
     return Item(
         template_id=template_id,
@@ -585,6 +607,9 @@ STAGES = (
 )
 
 
+from expansion import install as install_expansion
+STAGES += install_expansion(ITEM_TEMPLATES, ENEMIES, _item)
+
 for _stage in STAGES:
     _stage.loot_rolls = 3
     _stage.recommended_level = max(1, round(_stage.index * .88))
@@ -597,7 +622,8 @@ STAGE_BY_INDEX = {stage.index: stage for stage in STAGES}
 def create_endless_stage(depth, seed):
     depth = max(1, int(depth))
     roller = random.Random(seed + depth * 7919)
-    regular = [enemy_id for enemy_id, enemy in ENEMIES.items() if not enemy.boss]
+    available = {eid for stage in STAGES if stage.act <= min(ACT_COUNT, 5 + (depth - 1) // 5) for eid in stage.enemies}
+    regular = [enemy_id for enemy_id, enemy in ENEMIES.items() if not enemy.boss and enemy_id in available]
     bosses = [enemy_id for enemy_id, enemy in ENEMIES.items() if enemy.boss]
     waves = min(6, 4 + depth // 5)
     enemies = [roller.choice(regular) for _ in range(waves)]
@@ -615,7 +641,7 @@ def create_endless_stage(depth, seed):
         "primal_essence",
         3,
         "The dungeon remembers the campaign and rebuilds itself stronger around every victory.",
-        5 + min(4, (depth - 1) // 5),
+        min(ACT_COUNT, 5 + (depth - 1) // 5),
         1.0 + depth * .075,
         depth,
     )
@@ -648,6 +674,42 @@ RECIPES = {
     tuple(sorted(("astral_edge", "primal_essence"))): "voidglass_sabre",
     tuple(sorted(("fortune_eclipse", "primal_essence"))): "crownless_oath",
 }
+
+
+# Both items can drop in their own region; recipes provide a deterministic route.
+for _act, _pair in enumerate(zip(REGIONAL_ITEMS[::2], REGIONAL_ITEMS[1::2]), 1):
+    for _stage in STAGES:
+        if _stage.act == _act:
+            for _enemy_id in _stage.enemies:
+                for _row in _pair:
+                    if _row[0] not in ENEMIES[_enemy_id].loot:
+                        ENEMIES[_enemy_id].loot += (_row[0],)
+for _base, _catalyst, _result in (
+    ("rusted_falchion", "bone_shard", "ossuary_lance"),
+    ("copper_loop", "ghost_salt", "mourner_seal"),
+    ("bone_cleaver", "ember_essence", "cinder_scythe"),
+    ("iron_vow", "ember_core", "kiln_heart"),
+    ("warden_pike", "rime_essence", "glacier_glaive"),
+    ("bone_luck", "storm_wire", "thunder_dial"),
+    ("warden_pike", "venom_essence", "bog_sickle"),
+    ("vital_knot", "venom_essence", "spore_lantern"),
+    ("astral_edge", "crown_fragment", "eclipse_halberd"),
+    ("astral_orbit", "void_resin", "starless_compass"),
+):
+    RECIPES[tuple(sorted((_base, _catalyst)))] = _result
+
+
+for _left, _right, _result in (
+    ("crownless_oath", "rime_essence", "tidebreaker"),
+    ("dragonbone_pavise", "frostglass", "brineward"),
+    ("tidal_glass", "ember_core", "ember_oath"),
+    ("tidebreaker", "ember_core", "furnace_maul"),
+    ("brineward", "iron_scrap", "cathedral_guard"),
+    ("furnace_maul", "primal_essence", "dawnspear"),
+    ("cathedral_guard", "crown_fragment", "daybreak_aegis"),
+    ("ember_oath", "primal_essence", "dawn_relic"),
+):
+    RECIPES[tuple(sorted((_left, _right)))] = _result
 
 
 def recipe_result(first_template, second_template):
@@ -696,11 +758,11 @@ def _validate_content():
         for template_id in enemy.loot:
             if template_id not in ITEM_TEMPLATES:
                 raise ValueError(f"Unknown loot item {template_id} on {enemy_id}")
-    if len(STAGES) != 25 or [stage.index for stage in STAGES] != list(range(1, 26)):
-        raise ValueError("Stages must be exactly 1 through 25")
-    if {stage.act for stage in STAGES} != {1, 2, 3, 4, 5}:
-        raise ValueError("Stages must span five acts")
-    if any(sum(1 for stage in STAGES if stage.act == act) != 5 for act in range(1, 6)):
+    if len(STAGES) != TOTAL_STAGES or [stage.index for stage in STAGES] != list(range(1, TOTAL_STAGES + 1)):
+        raise ValueError("Stages must cover the full campaign")
+    if {stage.act for stage in STAGES} != set(range(1, ACT_COUNT + 1)):
+        raise ValueError("Stages must span every act")
+    if any(sum(1 for stage in STAGES if stage.act == act) != 5 for act in range(1, ACT_COUNT + 1)):
         raise ValueError("Each act must contain five stages")
     for stage in STAGES:
         if len(stage.enemies) < 2:

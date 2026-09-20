@@ -248,12 +248,12 @@ class CombatEngine:
         if self.hero_hp / self.hero_max_hp <= .30:
             low_bonus = self.hero.effect_total("low_health_attack") + self.hero.effect_total("last_stand_damage")
             damage = round(damage * (1 + low_bonus))
-        if self.has_trait("execution") and self.enemy.hp / self.enemy.max_hp <= .25:
-            damage = round(damage * (1.40 + self.hero.effect_total("execute_bonus")))
+        if self.enemy.hp / self.enemy.max_hp <= .25:
+            damage = round(damage * (1 + (.40 if self.has_trait("execution") else 0) + self.hero.effect_total("execute_bonus")))
         if self.has_trait("combo") and self.hero_attacks % 3 == 0:
             damage = round(damage * 1.65)
-        if self.has_trait("boss_hunter") and self.enemy.boss:
-            damage = round(damage * (1.18 + self.hero.effect_total("boss_damage")))
+        if self.enemy.boss:
+            damage = round(damage * (1 + (.18 if self.has_trait("boss_hunter") else 0) + self.hero.effect_total("boss_damage")))
         if self.rng.random() < self.hero.effect_total("double_strike_chance"):
             damage = round(damage * 1.65)
         if self.shatter_charge:
@@ -287,7 +287,10 @@ class CombatEngine:
                     self.total_damage += extra
                     proc_events.append(CombatEvent("proc", f"{label} adds {extra} damage.", "hero", extra, element=element))
         if damage and self.has_trait("leech"):
-            self.hero_hp = min(self.hero_max_hp, self.hero_hp + max(1, round(damage * .12)))
+            restored = min(self.hero_max_hp - self.hero_hp, max(1, round(damage * .12)))
+            self.hero_hp += restored
+            if restored:
+                self.emit(CombatEvent("heal", f"Life steal restores {restored} HP.", "hero", restored))
         if damage and self.enemy_has("thorned"):
             reflected = max(1, round(damage * .10))
             self.hero_hp = max(0, self.hero_hp - reflected)

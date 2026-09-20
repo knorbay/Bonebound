@@ -1,0 +1,8 @@
+Assets added 2026-09-20; CC0 1.0 Universal, https://creativecommons.org/publicdomain/zero/1.0/
+Henrique Lazarini / 7Soul1, collection by gnola14:
+https://opengameart.org/content/496-pixel-art-icons-for-medievalfantasy-rpg
+FazeDevWater, Dungeon Themes:
+https://opengameart.org/content/dungeon-themes
+Cleyton Kauffman, Boss Battle Theme:
+https://opengameart.org/content/boss-battle-theme
+See ASSET_SOURCES.md and tools/build_curated_assets.py for exact file mappings.
