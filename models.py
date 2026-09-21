@@ -1,3 +1,4 @@
+from campaign_config import TOTAL_STAGES, ENDLESS_UNLOCK_STAGE
 import uuid
 import random
 from dataclasses import dataclass, field
@@ -65,6 +66,12 @@ class Item:
         return None
 
     @property
+    def category_label(self):
+        if self.kind == ItemKind.RING:
+            return str(self.effects.get("accessory_form", "Trinket")).title()
+        return self.kind.value.title()
+
+    @property
     def attribute_count(self):
         return sum(1 for value in self.stats.values() if value)
 
@@ -107,6 +114,10 @@ class Item:
             for effect, label in (("battle_attack", "ATK"), ("battle_defense", "DEF"), ("battle_luck", "LUCK")):
                 if self.effects.get(effect):
                     parts.append(f"+{int(self.effects[effect])} {label}")
+            if self.effects.get("duration_turns") and any(self.effects.get(effect) for effect in ("battle_attack", "battle_defense", "battle_luck")):
+                parts.append(f"{int(self.effects['duration_turns'])} turns")
+        if self.effects.get("barrier_on_start"):
+            parts.append(f"Barrier +{int(self.effects['barrier_on_start'])}")
         return "  •  ".join(parts) if parts else "No stat bonus"
 
     def to_dict(self):
@@ -178,14 +189,23 @@ class Stage:
     loot_rolls: int
     description: str
     act: int
+    difficulty: float = 1.0
+    endless_depth: int = 0
 
 
 class Hero:
+    @property
+    def endless_unlocked(self):
+        return self.campaign_complete or ENDLESS_UNLOCK_STAGE in self.cleared_stages or self.best_endless > 0
+
+    BALANCE_VERSION = 3
+
     def __init__(self):
+        self.balance_version = self.BALANCE_VERSION
         self.name = "The Wayfarer"
         self.level = 1
         self.experience = 0
-        self.base_stats = {"health": 40, "attack": 8, "defense": 4, "luck": 3}
+        self.base_stats = {"health": 55, "attack": 6, "defense": 4, "luck": 3}
         self.stat_points = 0
         self.inventory_capacity = 12
         self.inventory = []
@@ -209,6 +229,10 @@ class Hero:
         self.pending_routes = []
         self.pending_stage = 0
         self.training_count = 0
+        self.campaign_complete = False
+        self.ending_seen = False
+        self.endless_depth = 0
+        self.best_endless = 0
 
     @property
     def xp_needed(self):
@@ -354,7 +378,7 @@ class Hero:
             need = self.xp_needed
             self.experience -= need
             self.level += 1
-            self.base_stats["health"] += 3
+            self.base_stats["health"] += 16
             self.stat_points += 1
             levels += 1
         return levels
@@ -362,7 +386,7 @@ class Hero:
     def spend_point(self, stat):
         if self.stat_points <= 0 or stat not in self.base_stats:
             return False
-        self.base_stats[stat] += 4 if stat == "health" else 1
+        self.base_stats[stat] += 10 if stat == "health" else 1
         self.stat_points -= 1
         return True
 
@@ -381,6 +405,7 @@ class Hero:
 
     def to_dict(self):
         return {
+            "balance_version": self.balance_version,
             "name": self.name,
             "level": self.level,
             "experience": self.experience,
@@ -408,11 +433,16 @@ class Hero:
             "pending_routes": list(self.pending_routes),
             "pending_stage": self.pending_stage,
             "training_count": self.training_count,
+            "campaign_complete": self.campaign_complete,
+            "ending_seen": self.ending_seen,
+            "endless_depth": self.endless_depth,
+            "best_endless": self.best_endless,
         }
 
     @classmethod
     def from_dict(cls, data):
         hero = cls()
+        saved_balance_version = int(data.get("balance_version", 1))
         hero.name = data.get("name", hero.name)
         hero.level = int(data.get("level", 1))
         hero.experience = int(data.get("experience", 0))
@@ -429,9 +459,9 @@ class Hero:
             hero.boost_uid = None
         hero.gold = int(data.get("gold", 0))
         hero.bone_dust = int(data.get("bone_dust", 0))
-        hero.unlocked_stage = max(1, min(25, int(data.get("unlocked_stage", 1))))
-        hero.cleared_stages = {int(value) for value in data.get("cleared_stages", []) if 1 <= int(value) <= 25}
-        hero.best_turns = {int(key): int(value) for key, value in data.get("best_turns", {}).items() if 1 <= int(key) <= 25}
+        hero.unlocked_stage = max(1, min(TOTAL_STAGES, int(data.get("unlocked_stage", 1))))
+        hero.cleared_stages = {int(value) for value in data.get("cleared_stages", []) if 1 <= int(value) <= TOTAL_STAGES}
+        hero.best_turns = {int(key): int(value) for key, value in data.get("best_turns", {}).items() if 1 <= int(key) <= TOTAL_STAGES}
         hero.total_wins = int(data.get("total_wins", 0))
         hero.total_losses = int(data.get("total_losses", 0))
         hero.total_enemies = int(data.get("total_enemies", 0))
@@ -445,4 +475,43 @@ class Hero:
         hero.pending_routes = [str(value) for value in data.get("pending_routes", [])][:3]
         hero.pending_stage = int(data.get("pending_stage", 0))
         hero.training_count = int(data.get("training_count", 0))
+        hero.campaign_complete = bool(data.get("campaign_complete", TOTAL_STAGES in hero.cleared_stages))
+        hero.ending_seen = bool(data.get("ending_seen", False))
+        hero.endless_depth = max(0, int(data.get("endless_depth", 0)))
+        hero.best_endless = max(hero.endless_depth, int(data.get("best_endless", 0)))
+        if saved_balance_version < 2:
+            # v2 removes the shield guard pool and lowers the launch loadout's
+            # excessive attack. Migrate existing campaigns so resuming an old
+            # save does not silently preserve the retired balance rules.
+            hero.base_stats["attack"] = max(1, hero.base_stats["attack"] - 2)
+            saved_items = hero.inventory + hero.pending_loot + hero.equipment_items()
+            for item in saved_items:
+                item.effects.pop("guard_points", None)
+                if item.template_id == "wayfarer_blade":
+                    item.stats["attack"] = max(1, item.stats.get("attack", 0) - 3)
+                    if "attack" in item.caps:
+                        item.caps["attack"] = min(16, item.caps["attack"])
+        if saved_balance_version < 3:
+            # v3 gives campaign health room to reach roughly half of the final
+            # boss's 1000 HP scale and retires newly-created potion stacks.
+            hero.base_stats["health"] += max(0, hero.level - 1) * 4
+            for item in hero.inventory + hero.pending_loot + hero.equipment_items():
+                if item.kind == ItemKind.POTION:
+                    item.max_stack = 1
+            # Preserve old consumables while expanding their stacks into free
+            # backpack cells. A legacy overflow stack drains normally but can
+            # never accept new potions.
+            additions = []
+            for item in hero.inventory:
+                if item.kind != ItemKind.POTION:
+                    continue
+                while item.stack > 1 and len(hero.inventory) + len(additions) < hero.inventory_capacity:
+                    item.stack -= 1
+                    clone = Item.from_dict(item.to_dict())
+                    clone.uid = uuid.uuid4().hex[:12]
+                    clone.stack = 1
+                    clone.max_stack = 1
+                    additions.append(clone)
+            hero.inventory.extend(additions)
+        hero.balance_version = cls.BALANCE_VERSION
         return hero

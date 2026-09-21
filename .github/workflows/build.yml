@@ -1,9 +1,10 @@
-name: Nuitka Builds
+name: Nuitka Multi-Platform Builds
 
 on:
   push:
     branches:
       - main
+      - "release/**"
     tags:
       - "v*"
   workflow_dispatch:
@@ -12,81 +13,250 @@ permissions:
   contents: read
 
 jobs:
-  windows:
-    name: Windows x64
-    runs-on: windows-latest
+  macos:
+    name: macOS
+    runs-on: macos-latest
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
+
       - name: Install dependencies
-        run: python -m pip install -r requirements-build.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
       - name: Validate source
-        run: python main.py --simulate
-      - name: Compile with Nuitka
-        run: >-
-          python -m nuitka
-          --mode=standalone
-          --assume-yes-for-downloads
-          --windows-console-mode=disable
-          --output-filename=Bonebound
-          --output-dir=build/windows
-          --include-data-dir=assets=assets
-          --remove-output
-          main.py
-      - name: Validate compiled game
+        run: |
+          SDL_VIDEODRIVER=dummy \
+          SDL_AUDIODRIVER=dummy \
+          python main.py --simulate
+
+      - name: Compile macOS app with Nuitka
+        run: |
+          python -m nuitka \
+            --mode=app \
+            --assume-yes-for-downloads \
+            --output-dir=build/macos \
+            --output-filename=Bonebound \
+            --macos-app-name=Bonebound \
+            --macos-signed-app-name=com.knorbay.Bonebound \
+            --macos-app-icon=assets/ui/Bonebound.icns \
+            --include-data-dir=assets=assets \
+            --remove-output \
+            main.py
+
+      - name: Show Nuitka output
+        run: |
+          echo "=== Nuitka build output ==="
+          find build/macos -maxdepth 4 -print
+
+      - name: Find and rename app
+        run: |
+          APP_PATH="$(find build/macos -maxdepth 2 -type d -name '*.app' | head -n 1)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Nuitka did not produce a .app bundle."
+            echo "Contents of build/macos:"
+            find build/macos -maxdepth 5 -print
+            exit 1
+          fi
+
+          echo "Found app bundle: $APP_PATH"
+
+          if [ "$APP_PATH" != "build/macos/Bonebound.app" ]; then
+            rm -rf build/macos/Bonebound.app
+            mv "$APP_PATH" build/macos/Bonebound.app
+          fi
+
+          echo "Final app:"
+          ls -la build/macos
+          ls -la build/macos/Bonebound.app
+
+      - name: Validate app executable
+        run: |
+          echo "=== Bonebound.app contents ==="
+          find build/macos/Bonebound.app -maxdepth 3 -print
+
+          EXECUTABLE="$(find build/macos/Bonebound.app/Contents/MacOS -type f -perm +111 | head -n 1)"
+
+          if [ -z "$EXECUTABLE" ]; then
+            echo "ERROR: No executable found inside Bonebound.app"
+            exit 1
+          fi
+
+          echo "Executable: $EXECUTABLE"
+
+          SDL_VIDEODRIVER=dummy \
+          SDL_AUDIODRIVER=dummy \
+          "$EXECUTABLE" --simulate
+
+      - name: Package macOS app
+        run: |
+          ditto \
+            -c \
+            -k \
+            --sequesterRsrc \
+            --keepParent \
+            build/macos/Bonebound.app \
+            Bonebound-v0.3.0-macos.zip
+
+      - name: Verify package
+        run: |
+          echo "=== ZIP contents ==="
+          unzip -l Bonebound-v0.3.0-macos.zip | head -100
+
+          test -f Bonebound-v0.3.0-macos.zip
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v7
+        with:
+          name: Bonebound-v0.3.0-macos
+          path: Bonebound-v0.3.0-macos.zip
+          if-no-files-found: error
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Validate source
         shell: pwsh
         run: |
           $env:SDL_VIDEODRIVER = "dummy"
           $env:SDL_AUDIODRIVER = "dummy"
-          & "build/windows/main.dist/Bonebound.exe" --simulate
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python main.py --simulate
+
+      - name: Compile Windows app with Nuitka
+        shell: pwsh
+        run: |
+          python -m nuitka `
+            --mode=standalone `
+            --assume-yes-for-downloads `
+            --output-dir=build/windows `
+            --output-filename=Bonebound.exe `
+            --windows-console-mode=disable `
+            --windows-icon-from-ico=assets/ui/Bonebound.ico `
+            --company-name=knorbay `
+            --product-name=Bonebound `
+            --file-version=0.3.0.0 `
+            --product-version=0.3.0.0 `
+            --include-data-dir=assets=assets `
+            --remove-output `
+            main.py
+
+      - name: Find and validate Windows bundle
+        shell: pwsh
+        run: |
+          $dist = Get-ChildItem build/windows -Directory -Filter "*.dist" | Select-Object -First 1
+          if (-not $dist) { throw "Nuitka did not produce a Windows standalone directory." }
+          Move-Item $dist.FullName build/windows/Bonebound
+          $exe = Get-ChildItem build/windows/Bonebound -File -Filter "Bonebound.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Bonebound.exe was not found in the Windows bundle." }
+          $env:SDL_VIDEODRIVER = "dummy"
+          $env:SDL_AUDIODRIVER = "dummy"
+          $process = Start-Process -FilePath $exe.FullName -ArgumentList "--simulate" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged Windows simulation failed with exit code $($process.ExitCode)." }
+
       - name: Package Windows build
         shell: pwsh
         run: |
-          Move-Item "build/windows/main.dist" "build/windows/Bonebound"
-          Compress-Archive -Path "build/windows/Bonebound" -DestinationPath "Bonebound-v0.1.0-windows-x64.zip"
-      - uses: actions/upload-artifact@v7
+          Compress-Archive -Path build/windows/Bonebound -DestinationPath Bonebound-v0.3.0-windows-x64.zip -CompressionLevel Optimal
+          if (-not (Test-Path Bonebound-v0.3.0-windows-x64.zip)) { throw "Windows ZIP was not created." }
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v7
         with:
-          name: Bonebound-v0.1.0-windows-x64
-          path: Bonebound-v0.1.0-windows-x64.zip
-          archive: false
+          name: Bonebound-v0.3.0-windows-x64
+          path: Bonebound-v0.3.0-windows-x64.zip
+          if-no-files-found: error
 
   linux:
     name: Linux x64
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install --yes patchelf
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes patchelf
+
       - name: Install Python dependencies
-        run: python -m pip install -r requirements-build.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
       - name: Validate source
-        run: python main.py --simulate
-      - name: Compile with Nuitka
-        run: >-
-          python -m nuitka
-          --mode=standalone
-          --assume-yes-for-downloads
-          --output-filename=Bonebound
-          --output-dir=build/linux
-          --include-data-dir=assets=assets
-          --remove-output
-          main.py
-      - name: Validate compiled game
-        run: SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/linux/main.dist/Bonebound --simulate
+        run: |
+          SDL_VIDEODRIVER=dummy \
+          SDL_AUDIODRIVER=dummy \
+          python main.py --simulate
+
+      - name: Compile Linux app with Nuitka
+        run: |
+          python -m nuitka \
+            --mode=standalone \
+            --assume-yes-for-downloads \
+            --output-dir=build/linux \
+            --output-filename=Bonebound \
+            --linux-icon=assets/ui/bonebound_app_icon.png \
+            --include-data-dir=assets=assets \
+            --remove-output \
+            main.py
+
+      - name: Find and validate Linux bundle
+        run: |
+          DIST_PATH="$(find build/linux -maxdepth 1 -type d -name '*.dist' | head -n 1)"
+          if [ -z "$DIST_PATH" ]; then
+            echo "ERROR: Nuitka did not produce a Linux standalone directory."
+            exit 1
+          fi
+          mv "$DIST_PATH" build/linux/Bonebound
+          test -x build/linux/Bonebound/Bonebound
+          SDL_VIDEODRIVER=dummy \
+          SDL_AUDIODRIVER=dummy \
+          build/linux/Bonebound/Bonebound --simulate
+
       - name: Package Linux build
         run: |
-          mv build/linux/main.dist build/linux/Bonebound
-          tar -C build/linux -czf Bonebound-v0.1.0-linux-x64.tar.gz Bonebound
-      - uses: actions/upload-artifact@v7
+          cd build/linux
+          zip -r ../../Bonebound-v0.3.0-linux-x64.zip Bonebound
+          cd ../..
+          unzip -t Bonebound-v0.3.0-linux-x64.zip
+
+      - name: Upload Linux build
+        uses: actions/upload-artifact@v7
         with:
-          name: Bonebound-v0.1.0-linux-x64
-          path: Bonebound-v0.1.0-linux-x64.tar.gz
-          archive: false
+          name: Bonebound-v0.3.0-linux-x64
+          path: Bonebound-v0.3.0-linux-x64.zip
+          if-no-files-found: error

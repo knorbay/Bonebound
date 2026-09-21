@@ -51,6 +51,8 @@ ELEMENT_ADVANTAGE = {
 
 
 class CombatEngine:
+    APPROACH_DURATION = 1.65
+
     def __init__(self, hero, stage, rng=None):
         self.hero = hero
         self.stage = stage
@@ -64,7 +66,7 @@ class CombatEngine:
         self.enemy = None
         self.outcome = BattleOutcome.ACTIVE
         self.phase = "approach"
-        self.timer = .85
+        self.timer = self.APPROACH_DURATION
         self.turns = 0
         self.defeated = 0
         self.xp_earned = 0
@@ -76,6 +78,7 @@ class CombatEngine:
         self.hero_attacks = 0
         self.enemy_attacks = 0
         self.enemy_chill = 0.0
+        self.boss_phase_triggered = False
         self.shatter_charge = False
         self.guardian_used = False
         self.last_stand_used = False
@@ -95,7 +98,10 @@ class CombatEngine:
 
     @property
     def wave_number(self):
-        return self.enemy_index + 1
+        # Spawning after the final enemy advances the internal cursor once more
+        # before switching to victory. Keep presentation state inside the
+        # stage's real range so the victory transition can never show 4/3.
+        return min(self.wave_total, max(0, self.enemy_index + 1))
 
     @property
     def wave_total(self):
@@ -124,6 +130,32 @@ class CombatEngine:
         template = ENEMIES[self.enemy.enemy_id] if self.enemy else None
         return bool(template and name in template.traits)
 
+    def _trigger_boss_phase(self):
+        if (
+            not self.enemy
+            or not self.enemy.boss
+            or self.boss_phase_triggered
+            or not self.enemy_has("second_phase")
+            or self.enemy.hp <= 0
+            or self.enemy.hp > self.enemy.max_hp * .50
+        ):
+            return False
+        self.boss_phase_triggered = True
+        overlord = self.enemy_has("overlord")
+        recovery = max(1, round(self.enemy.max_hp * (.10 if overlord else .07)))
+        self.enemy.hp = min(self.enemy.max_hp, self.enemy.hp + recovery)
+        self.enemy.attack = max(1, round(self.enemy.attack * (1.18 if overlord else 1.12)))
+        self.enemy.defense += 4 if overlord else 2
+        self.enemy_anim = "ready"
+        self.emit(CombatEvent(
+            "boss_phase",
+            f"{self.enemy.name} enters its final rite: +{recovery} HP, attack and defense rise.",
+            "enemy",
+            recovery,
+            element=self.enemy.element,
+        ))
+        return True
+
     def emit(self, event):
         self.events.append(event)
         self.history.append(event)
@@ -142,24 +174,31 @@ class CombatEngine:
             self.emit(CombatEvent("victory", f"Dungeon {self.stage.index} cleared in {self.turns} rounds.", "hero"))
             return
         template = ENEMIES[self.stage.enemies[self.enemy_index]]
+        difficulty = max(1.0, float(getattr(self.stage, "difficulty", 1.0)))
+        rank_health = 1.08 if template.boss else 1.04 if template.elite else 1.0
+        health_scale = difficulty * rank_health
+        attack_scale = 1.0 + (difficulty - 1.0) * .82
+        defense_scale = 1.0 + (difficulty - 1.0) * .54
+        max_hp = max(1, round(template.max_hp * health_scale))
         self.enemy_chill = 0.0
+        self.boss_phase_triggered = False
         self.enemy = EnemyState(
             template.enemy_id,
             template.name,
-            template.max_hp,
-            template.max_hp,
-            template.attack,
-            template.defense,
-            template.luck,
+            max_hp,
+            max_hp,
+            max(1, round(template.attack * attack_scale)),
+            max(0, round(template.defense * defense_scale)),
+            max(0, round(template.luck + (difficulty - 1.0) * 3)),
             template.element,
-            template.xp,
+            max(1, round(template.xp * (1.0 + (difficulty - 1.0) * .58))),
             template.elite,
             template.boss,
         )
         self.phase = "approach"
-        self.timer = .82
+        self.timer = self.APPROACH_DURATION
         self.hero_anim = "walk"
-        self.enemy_anim = "idle"
+        self.enemy_anim = "run"
         self.emit(CombatEvent("wave", f"Wave {self.wave_number}/{self.wave_total}: {self.enemy.name} approaches.", "enemy", element=self.enemy.element))
 
     def _crit_chance(self, luck):
@@ -176,11 +215,12 @@ class CombatEngine:
         weapon_element = self.hero.weapon_element()
         if weapon_element == Element.NEUTRAL:
             return 1.0
+        power_bonus = min(.22, .05 + self.hero.weapon_element_power() * .01)
         if ELEMENT_ADVANTAGE.get(weapon_element) == self.enemy.element:
-            return 1.25 + min(.15, self.hero.weapon_element_power() / 500) + self.hero.effect_total("element_damage")
+            return 1.25 + power_bonus + self.hero.effect_total("element_damage")
         if weapon_element == self.enemy.element:
-            return .90
-        return 1.0
+            return .90 + power_bonus * .45
+        return 1.0 + power_bonus + self.hero.effect_total("element_damage") * .5
 
     def _element_defense_multiplier(self):
         shield_element = self.hero.shield_element()
@@ -202,17 +242,20 @@ class CombatEngine:
         effective_defense = self.enemy.defense * max(.45, 1 - pierce)
         raw = self.hero_attack * variance - math.floor(effective_defense * .55)
         damage = max(1, round(raw * self._element_attack_multiplier()))
+        weapon = self.hero.equipment.get("weapon")
+        if weapon and weapon.upgrade:
+            damage = max(1, round(damage * (1 + min(.24, weapon.upgrade * .035))))
         if self.hero_hp / self.hero_max_hp <= .30:
             low_bonus = self.hero.effect_total("low_health_attack") + self.hero.effect_total("last_stand_damage")
             damage = round(damage * (1 + low_bonus))
-        if self.has_trait("execution") and self.enemy.hp / self.enemy.max_hp <= .25:
-            damage = round(damage * (1.30 + self.hero.effect_total("execute_bonus")))
+        if self.enemy.hp / self.enemy.max_hp <= .25:
+            damage = round(damage * (1 + (.40 if self.has_trait("execution") else 0) + self.hero.effect_total("execute_bonus")))
         if self.has_trait("combo") and self.hero_attacks % 3 == 0:
-            damage = round(damage * 1.50)
-        if self.has_trait("boss_hunter") and self.enemy.boss:
-            damage = round(damage * (1.18 + self.hero.effect_total("boss_damage")))
+            damage = round(damage * 1.65)
+        if self.enemy.boss:
+            damage = round(damage * (1 + (.18 if self.has_trait("boss_hunter") else 0) + self.hero.effect_total("boss_damage")))
         if self.rng.random() < self.hero.effect_total("double_strike_chance"):
-            damage = round(damage * 1.50)
+            damage = round(damage * 1.65)
         if self.shatter_charge:
             damage = round(damage * 1.35)
             self.shatter_charge = False
@@ -239,12 +282,15 @@ class CombatEngine:
             )
             for effect, label, element in proc_data:
                 if self.rng.random() < self.hero.effect_total(effect):
-                    extra = max(1, round(damage * .18))
+                    extra = max(1, round(damage * .28))
                     self.enemy.hp = max(0, self.enemy.hp - extra)
                     self.total_damage += extra
                     proc_events.append(CombatEvent("proc", f"{label} adds {extra} damage.", "hero", extra, element=element))
         if damage and self.has_trait("leech"):
-            self.hero_hp = min(self.hero_max_hp, self.hero_hp + max(1, round(damage * .12)))
+            restored = min(self.hero_max_hp - self.hero_hp, max(1, round(damage * .12)))
+            self.hero_hp += restored
+            if restored:
+                self.emit(CombatEvent("heal", f"Life steal restores {restored} HP.", "hero", restored))
         if damage and self.enemy_has("thorned"):
             reflected = max(1, round(damage * .10))
             self.hero_hp = max(0, self.hero_hp - reflected)
@@ -259,6 +305,7 @@ class CombatEngine:
         self.emit(CombatEvent("hero_hit", text, "hero", damage, critical, blocked, self.hero.weapon_element()))
         for event in proc_events:
             self.emit(event)
+        self._trigger_boss_phase()
         if self.hero_hp <= 0 and not self._survive_lethal():
             self._defeat("Thorns claim the final breath.")
             return
@@ -286,6 +333,11 @@ class CombatEngine:
             self.hero_hp += restored
             if restored:
                 self.emit(CombatEvent("heal", f"Your weapon restores {restored} HP.", "hero", restored))
+        if self.stage.index >= 5 and self.enemy_index + 1 < len(self.stage.enemies):
+            recovered = min(max(2, round(self.hero_max_hp * .06)), self.hero_max_hp - self.hero_hp)
+            self.hero_hp += recovered
+            if recovered:
+                self.emit(CombatEvent("heal", f"You catch your breath between waves and recover {recovered} HP.", "hero", recovered))
         self.phase = "wave_clear"
         self.timer = .95
 
@@ -313,7 +365,7 @@ class CombatEngine:
     def _enemy_strike(self):
         self.enemy_attacks += 1
         self.enemy_anim = "attack"
-        self.hero_anim = "idle"
+        self.hero_anim = "guard" if self.hero.equipment.get("shield") else "idle"
         blocked = self.rng.random() < self._block_chance(self.hero_luck)
         critical = self.rng.random() < min(.30, .03 + self.enemy.luck * .012)
         variance = self.rng.uniform(.90, 1.10)
@@ -334,7 +386,10 @@ class CombatEngine:
             damage = 0
             self.blocks += 1
             if self.has_trait("mending"):
-                self.hero_hp = min(self.hero_max_hp, self.hero_hp + 2)
+                restored = min(2, self.hero_max_hp - self.hero_hp)
+                self.hero_hp += restored
+                if restored:
+                    self.emit(CombatEvent("heal", f"The shield mend restores {restored} HP.", "hero", restored))
         if damage and self.has_trait("guardian") and not self.guardian_used:
             damage = max(1, round(damage * .50))
             self.guardian_used = True
@@ -375,6 +430,7 @@ class CombatEngine:
             self.enemy.hp = max(0, self.enemy.hp - retaliation)
             self.total_damage += retaliation
             self.emit(CombatEvent("counter", f"Retaliation deals {retaliation} damage.", "hero", retaliation, element=self.hero.weapon_element()))
+            self._trigger_boss_phase()
         if self.boost_turns > 0:
             self.boost_turns -= 1
             if self.boost_turns == 0 and any(self.bonus_stats.values()):
@@ -469,7 +525,9 @@ class CombatEngine:
             self.phase = "enemy_attack"
             self.timer = .26
             self.enemy_anim = "attack"
-            self.hero_anim = "idle"
+            # Presentation only: the shield braces against every incoming hit,
+            # while its actual combat value remains the defense stat.
+            self.hero_anim = "guard" if self.hero.equipment.get("shield") else "idle"
         elif self.phase == "enemy_attack":
             self._enemy_strike()
         elif self.phase == "wave_clear":
