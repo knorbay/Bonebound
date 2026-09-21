@@ -105,20 +105,20 @@ jobs:
             --sequesterRsrc \
             --keepParent \
             build/macos/Bonebound.app \
-            Bonebound-v0.1.0-macos.zip
+            Bonebound-v0.3.0-macos.zip
 
       - name: Verify package
         run: |
           echo "=== ZIP contents ==="
-          unzip -l Bonebound-v0.1.0-macos.zip | head -100
+          unzip -l Bonebound-v0.3.0-macos.zip | head -100
 
-          test -f Bonebound-v0.1.0-macos.zip
+          test -f Bonebound-v0.3.0-macos.zip
 
       - name: Upload macOS build
         uses: actions/upload-artifact@v7
         with:
-          name: Bonebound-v0.1.0-macos
-          path: Bonebound-v0.1.0-macos.zip
+          name: Bonebound-v0.3.0-macos
+          path: Bonebound-v0.3.0-macos.zip
           if-no-files-found: error
 
   windows:
@@ -160,8 +160,8 @@ jobs:
             --windows-icon-from-ico=assets/ui/Bonebound.ico `
             --company-name=knorbay `
             --product-name=Bonebound `
-            --file-version=0.1.0.0 `
-            --product-version=0.1.0.0 `
+            --file-version=0.3.0.0 `
+            --product-version=0.3.0.0 `
             --include-data-dir=assets=assets `
             --remove-output `
             main.py
@@ -182,14 +182,14 @@ jobs:
       - name: Package Windows build
         shell: pwsh
         run: |
-          Compress-Archive -Path build/windows/Bonebound -DestinationPath Bonebound-v0.1.0-windows-x64.zip -CompressionLevel Optimal
-          if (-not (Test-Path Bonebound-v0.1.0-windows-x64.zip)) { throw "Windows ZIP was not created." }
+          Compress-Archive -Path build/windows/Bonebound -DestinationPath Bonebound-v0.3.0-windows-x64.zip -CompressionLevel Optimal
+          if (-not (Test-Path Bonebound-v0.3.0-windows-x64.zip)) { throw "Windows ZIP was not created." }
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v7
         with:
-          name: Bonebound-v0.1.0-windows-x64
-          path: Bonebound-v0.1.0-windows-x64.zip
+          name: Bonebound-v0.3.0-windows-x64
+          path: Bonebound-v0.3.0-windows-x64.zip
           if-no-files-found: error
 
   linux:
@@ -250,13 +250,13 @@ jobs:
       - name: Package Linux build
         run: |
           cd build/linux
-          zip -r ../../Bonebound-v0.1.0-linux-x64.zip Bonebound
+          zip -r ../../Bonebound-v0.3.0-linux-x64.zip Bonebound
           cd ../..
-          unzip -t Bonebound-v0.1.0-linux-x64.zip
+          unzip -t Bonebound-v0.3.0-linux-x64.zip
 
       - name: Upload Linux build
         uses: actions/upload-artifact@v7
         with:
-          name: Bonebound-v0.1.0-linux-x64
-          path: Bonebound-v0.1.0-linux-x64.zip
+          name: Bonebound-v0.3.0-linux-x64
+          path: Bonebound-v0.3.0-linux-x64.zip
           if-no-files-found: error
